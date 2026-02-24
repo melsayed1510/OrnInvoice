@@ -375,6 +375,106 @@ input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4
 /* Ledger restore controls (UI فقط) */
 #ui [data-ledger="restore"]{padding-top:6px;border-top:1px dashed rgba(15,23,42,.15);}
 #ui #savedInvoices{min-width:260px;}
+
+
+  /*         بداية كود اصلاح تنسيق الموبايل حذف لو مشتغلش    */
+
+  /* ===========================
+   MOBILE RESPONSIVE PATCH v1
+   Place this at the VERY END of <style>
+   - Fixes poor mobile layout for #ui (input view)
+   - Keeps print layout untouched
+   =========================== */
+
+/* 0) Ensure print section never affects screen view */
+@media screen{
+  #print{ display:none !important; } /* print template hidden on screen */ 
+}
+
+/* 1) Mobile layout adjustments */
+@media (max-width: 768px){
+
+  /* Container spacing */
+  body{ padding: 12px !important; }
+  #ui .container.box{ padding:16px !important; border-radius:14px !important; }
+
+  /* Headline */
+  #ui h4{ margin:10px 0 14px !important; padding-bottom:10px !important; font-size:18px !important; }
+
+  /* 2) Stop forcing label+field in one row on mobile */
+  #ui .row.g-2 > [class^="col-"]{
+    display:block !important;
+    align-items:unset !important;
+    gap:0 !important;
+  }
+  #ui .row.g-2 > [class^="col-"] > label{
+    display:block !important;
+    flex:unset !important;
+    width:100% !important;
+    margin-bottom:6px !important;
+    white-space:normal !important;
+  }
+  #ui .row.g-2 > [class^="col-"] > .form-control,
+  #ui .row.g-2 > [class^="col-"] > .form-select{
+    width:100% !important;
+    flex:unset !important;
+  }
+
+  /* 3) Inputs comfortable for touch + prevent iOS zoom */
+  #ui input.form-control,
+  #ui select.form-select,
+  #ui textarea.form-control{
+    min-height:48px !important;
+    font-size:16px !important;
+  }
+  #ui .btn{
+    min-height:46px !important;
+    font-size:15px !important;
+  }
+
+  /* 4) Make action buttons stack nicely */
+  #ui .mt-3.no-print,
+  #ui .d-flex.justify-content-end.mt-3,
+  #ui .d-flex.justify-content-start.mb-3{
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:10px !important;
+  }
+  #ui .mt-3.no-print .btn{ width:100% !important; }
+
+  /* 5) Fix items table overflow: horizontal scroll */
+  #ui .table-responsive{
+    overflow-x:auto !important;
+    -webkit-overflow-scrolling:touch;
+    border-radius:14px;
+  }
+  /* If you don't wrap table with .table-responsive, still allow scroll */
+  #ui table.table.table-bordered{
+    display:block !important;
+    overflow-x:auto !important;
+    -webkit-overflow-scrolling:touch;
+    white-space:nowrap;
+  }
+  /* Keep a minimum width so columns don't crush */
+  #ui table.table.table-bordered{ min-width: 720px; }
+
+  /* 6) Summary table full width on mobile */
+  #ui table.sumtbl{
+    width:100% !important;
+  }
+
+  /* 7) Ledger restore controls: full width & wrap */
+  #ui [data-ledger="restore"]{
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:8px !important;
+  }
+  #ui #savedInvoices,
+  #ui #searchInvoiceNo{
+    width:100% !important;
+    min-width:0 !important;
+  }
+}
 </style>
 </head>
 <body class="p-3">
