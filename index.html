@@ -541,26 +541,34 @@ input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4
   }
 }
 
-@media print{
-  #print #printPages .print-sheet .paper-content{
-    padding: var(--safe-top) 24mm var(--safe-bottom) 24mm !important;
-  }
-}
 
 @media print{
   /* حرّك الإطار ناحية اليمين */
   #print #printPages .invoice-frame{
-    transform: translateX(5mm) !important; /* زوّد/قلّل الرقم */
+    transform: translateX(0mm) !important; /* زوّد/قلّل الرقم */
+    transform: translateY(50mm);
   }
 }
 
+
 @media print{
-  /* تحريك خلفية ORN paper.png ناحية اليمين */
-  #print #printPages .print-sheet{
-    background-position: 5mm -5mm !important; /* 5mm يمين */
-    bacgrounkd-size: 105% 105% !important; /* كبّر 3% */
+  /* أول صفحة مولّدة */
+  #print #printPages .print-sheet:first-child{
+    background-position: 5mm -5mm !important;
+    background-size: 100% 100% !important; /* كبّر 3% */
+  }
+
+  /* باقي الصفحات */
+  #print #printPages .print-sheet:not(:first-child){
+    background-position: 5mm 0mm !important;
+    background-size: 100% 100% !important; /* كبّر 3% */
+      --safe-top: 40mm;
+      --safe-right: 16mm;
+      --safe-bottom: 16mm;
+      --safe-left: 24mm;
   }
 }
+
 </style>
 </head>
 <body class="p-3">
@@ -673,7 +681,6 @@ input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4
 </main>
 </div>
 <script>
-
 const PREC=9;
 const rc=n=>Number(parseFloat(n).toFixed(PREC));
 const s3=n=>Number(n).toFixed(3);
@@ -992,8 +999,9 @@ window.addEventListener('beforeprint', renderPrintView);
 // =============================
 // دفتر الفواتير (Google Sheet عبر Apps Script Web App)
 // =============================
-const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyYCVHRSvwqFQAu3iSRoULfPj_V-l_Xi5M8xWVJZf3KaCbNr6MbQq8pDEDKBplAJiQD/exec";
-const LEDGER_KEY  = "k+R$416pd#9QOAl\]@TS!H-6lz";
+//const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyYCVHRSvwqFQAu3iSRoULfPj_V-l_Xi5M8xWVJZf3KaCbNr6MbQq8pDEDKBplAJiQD/exec";
+//const LEDGER_KEY  = "k+R$416pd#9QOAl\]@TS!H-6lz";
+const PROXY_URL = "https://broken-unit-b266invoice-proxy.m-elsayed1510-445.workers.dev";
 
 function buildInvoiceJSON(){
   let data={
@@ -1024,31 +1032,35 @@ function setLedgerStatus(msg, color='#111'){
 }
 
 async function saveToLedger(){
-  try{ calcItems(); }catch(e){}
-  try{ calcFinal(); }catch(e){}
-  const payload = buildInvoiceJSON();
 
-  if(!navigator.onLine){
-    queueLedger(payload);
-    setLedgerStatus('تم الحفظ محليًا (أوفلاين) وسيتم الإرسال عند توفر الإنترنت', '#b45309');
-    return;
-  }
+ try{ calcItems(); }catch(e){}
+ try{ calcFinal(); }catch(e){}
+ const payload = buildInvoiceJSON();
+ if(!navigator.onLine){
+   queueLedger(payload);
+   setLedgerStatus('تم الحفظ محليًا (أوفلاين) وسيتم الإرسال عند توفر الإنترنت', '#b45309');
+   return;
+ }
+ try{
+   setLedgerStatus('جارٍ الحفظ...', '#0f172a');
+   const res = await fetch(`${PROXY_URL}/save`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(payload)
+   });
+   const out = await res.json().catch(()=>null);
+   if(res.ok && (out?.ok ?? true)){
+     setLedgerStatus('تم إرسال الفاتورة للدفتر ✅', '#15803d');
+     refreshInvoicesList();
+   }else{
+     queueLedger(payload);
+     setLedgerStatus('تعذر الإرسال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
+   }
+ }catch(err){
+   queueLedger(payload);
+   setLedgerStatus('خطأ اتصال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
+ }
 
-  try{
-    setLedgerStatus('جارٍ الحفظ...', '#0f172a');
-    await fetch(`${WEB_APP_URL}?key=${encodeURIComponent(LEDGER_KEY)}`, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: 'data=' + encodeURIComponent(JSON.stringify(payload))
-    });
-    setLedgerStatus('تم إرسال الفاتورة للدفتر ✅ (راجع الشيت للتأكيد)', '#15803d');
-    // بعد الحفظ: حدّث القائمة فقط (لا نغيّر رقم الفاتورة تلقائيًا)
-    refreshInvoicesList();
-  }catch(err){
-    queueLedger(payload);
-    setLedgerStatus('خطأ اتصال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
-  }
 }
 
 function queueLedger(inv){
@@ -1059,68 +1071,62 @@ function queueLedger(inv){
 }
 
 async function flushLedgerQueue(){
-  if(!navigator.onLine) return;
-  const key='ledger_queue_v1';
-  const arr = JSON.parse(localStorage.getItem(key) || '[]');
-  if(!arr.length) return;
-  const remaining=[];
-  for(const item of arr){
-    try{
-      await fetch(`${WEB_APP_URL}?key=${encodeURIComponent(LEDGER_KEY)}`, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: 'data=' + encodeURIComponent(JSON.stringify(item.invoice))
-      });
-    }catch(e){
-      remaining.push(item);
-    }
-  }
-  localStorage.setItem(key, JSON.stringify(remaining));
+
+ if(!navigator.onLine) return;
+ const key='ledger_queue_v1';
+ const arr = JSON.parse(localStorage.getItem(key) || '[]');
+ if(!arr.length) return;
+ const remaining=[];
+ for(const item of arr){
+   try{
+     const res = await fetch(`${PROXY_URL}/save`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify(item.invoice)
+     });
+     const out = await res.json().catch(()=>null);
+     if(!(res.ok && (out?.ok ?? true))) remaining.push(item);
+   }catch(e){
+     remaining.push(item);
+   }
+ }
+ localStorage.setItem(key, JSON.stringify(remaining));
+
 }
 window.addEventListener('online', flushLedgerQueue);
 
-function jsonp(url){
-  return new Promise((resolve, reject)=>{
-    const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*1000);
-    window[cb] = (data)=>{ cleanup(); resolve(data); };
-    const s=document.createElement('script');
-    s.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
-    s.onerror = ()=>{ cleanup(); reject(new Error('JSONP failed')); };
-    document.head.appendChild(s);
-    function cleanup(){
-      try{ delete window[cb]; }catch(e){}
-      s.remove();
-    }
-  });
-}
-
+// jsonp() removed — using Cloudflare Worker proxy
 async function refreshInvoicesList(){
-  if(!navigator.onLine){
-    setLedgerStatus('لا يوجد إنترنت لتحديث قائمة الدفتر', '#b45309');
-    return;
-  }
-  try{
-    const url = `${WEB_APP_URL}?key=${encodeURIComponent(LEDGER_KEY)}&action=list`;
-    const res = await jsonp(url);
-    if(!res.ok){ setLedgerStatus('فشل تحميل القائمة: ' + (res.error||''), '#b91c1c'); return; }
-    const sel=document.getElementById('savedInvoices');
-    if(!sel) return;
-    sel.innerHTML='';
-    const ph=document.createElement('option');
-    ph.value='';
-    ph.textContent='اختر فاتورة محفوظة...';
-    sel.appendChild(ph);
-    (res.invoices||[]).forEach(inv=>{
-      const opt=document.createElement('option');
-      opt.value = inv.row;
-      opt.textContent = `${inv.invoiceNo || ''} - ${inv.customer || ''} - ${inv.date || ''}`;
-      sel.appendChild(opt);
-    });
-    setLedgerStatus('تم تحديث القائمة ✅', '#15803d');
-  }catch(e){
-    setLedgerStatus('تعذر تحديث القائمة', '#b91c1c');
-  }
+
+ if(!navigator.onLine){
+   setLedgerStatus('لا يوجد إنترنت لتحديث قائمة الدفتر', '#b45309');
+   return;
+ }
+ try{
+   const res = await fetch(`${PROXY_URL}/list`);
+   const data = await res.json();
+   if(!data || !data.ok){
+     setLedgerStatus('فشل تحميل القائمة: ' + (data?.error || ''), '#b91c1c');
+     return;
+   }
+   const sel=document.getElementById('savedInvoices');
+   if(!sel) return;
+   sel.innerHTML='';
+   const ph=document.createElement('option');
+   ph.value='';
+   ph.textContent='اختر فاتورة محفوظة...';
+   sel.appendChild(ph);
+   (data.invoices || []).forEach(inv=>{
+     const opt=document.createElement('option');
+     opt.value = inv.row;
+     opt.textContent = `${inv.invoiceNo || ''} - ${inv.customer || ''} - ${inv.date || ''}`;
+     sel.appendChild(opt);
+   });
+   setLedgerStatus('تم تحديث القائمة ✅', '#15803d');
+ }catch(e){
+   setLedgerStatus('تعذر تحديث القائمة', '#b91c1c');
+ }
+
 }
 
 async function loadSelectedInvoice(){
@@ -1131,31 +1137,38 @@ async function loadSelectedInvoice(){
 }
 
 async function searchInvoice(){
-  const q=(document.getElementById('searchInvoiceNo')?.value || '').trim();
-  if(!q){ setLedgerStatus('اكتب رقم الفاتورة للبحث', '#b45309'); return; }
-  if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للبحث', '#b45309'); return; }
-  try{
-    const url = `${WEB_APP_URL}?key=${encodeURIComponent(LEDGER_KEY)}&action=find&invoiceNo=${encodeURIComponent(q)}`;
-    const res = await jsonp(url);
-    if(!res.ok){ setLedgerStatus('غير موجود', '#b91c1c'); return; }
-    importFromObject(res.invoice);
-    setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
-  }catch(e){
-    setLedgerStatus('فشل البحث', '#b91c1c');
-  }
+
+ const q=(document.getElementById('searchInvoiceNo')?.value || '').trim();
+ if(!q){ setLedgerStatus('اكتب رقم الفاتورة للبحث', '#b45309'); return; }
+ if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للبحث', '#b45309'); return; }
+ try{
+   const res = await fetch(`${PROXY_URL}/find?invoiceNo=${encodeURIComponent(q)}`);
+   const data = await res.json();
+   if(!data || !data.ok){ setLedgerStatus('غير موجود', '#b91c1c'); return; }
+   importFromObject(data.invoice);
+   setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
+ }catch(e){
+   setLedgerStatus('فشل البحث', '#b91c1c');
+ }
+
 }
 
 async function loadInvoiceByRow(row){
-  if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للتحميل', '#b45309'); return; }
-  try{
-    const url = `${WEB_APP_URL}?key=${encodeURIComponent(LEDGER_KEY)}&action=get&row=${encodeURIComponent(row)}`;
-    const res = await jsonp(url);
-    if(!res.ok){ setLedgerStatus('فشل التحميل: ' + (res.error||''), '#b91c1c'); return; }
-    importFromObject(res.invoice);
-    setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
-  }catch(e){
-    setLedgerStatus('فشل التحميل', '#b91c1c');
-  }
+
+ if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للتحميل', '#b45309'); return; }
+ try{
+   const res = await fetch(`${PROXY_URL}/get?row=${encodeURIComponent(row)}`);
+   const data = await res.json();
+   if(!data || !data.ok){
+     setLedgerStatus('فشل التحميل: ' + (data?.error || ''), '#b91c1c');
+     return;
+   }
+   importFromObject(data.invoice);
+   setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
+ }catch(e){
+   setLedgerStatus('فشل التحميل', '#b91c1c');
+ }
+
 }
 
 function importFromObject(d){
@@ -1178,14 +1191,16 @@ function importFromObject(d){
 }
 
 async function setNextInvoiceNo(){
-  if(!navigator.onLine) return;
-  try{
-    const url = `${WEB_APP_URL}?key=${encodeURIComponent(LEDGER_KEY)}&action=next`;
-    const res = await jsonp(url);
-    if(res.ok && res.nextInvoiceNo){
-      invoiceNo.value = res.nextInvoiceNo;
-    }
-  }catch(e){}
+
+ if(!navigator.onLine) return;
+ try{
+   const res = await fetch(`${PROXY_URL}/next`);
+   const data = await res.json();
+   if(data && data.ok && data.nextInvoiceNo){
+     invoiceNo.value = data.nextInvoiceNo;
+   }
+ }catch(e){}
+
 }
 
 function newInvoice(){
