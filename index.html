@@ -475,6 +475,92 @@ input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4
     min-width:0 !important;
   }
 }
+
+
+/* ================================
+   PRINT BACKGROUND PAGINATION PATCH v2 (PRINT ONLY)
+   - ORN paper.png as FULL-PAGE background (no-repeat, exact A4 size)
+   - Prevents background splitting: each page is fixed 210mm x 297mm
+   - Prints ONLY generated pages (#printPages)
+   - Keeps SAFE margins already defined in the file (no changes)
+   - Page number position: left 2.5cm, bottom 3cm
+   IMPORTANT: In Chrome you MUST enable "Background graphics" to see CSS backgrounds.
+   ================================ */
+@media print{
+  /* Release legacy single-page lock */
+  html, body{ height:auto !important; overflow:visible !important; }
+
+  /* Hide the original single print template page */
+  #print #printSingle{ display:none !important; }
+
+  /* Ensure only generated pages are shown */
+  #print #printPages{ display:block !important; }
+
+  /* Generated page (A4) */
+  #print #printPages .print-sheet{
+    display:block !important;
+    width:210mm !important;
+    height:297mm !important;
+    margin:0 !important;
+    padding:0 !important;
+    position:relative !important;
+    overflow:hidden !important;
+    page-break-after: always !important;
+    break-after: page !important;
+
+    /* FULL background once per page */
+    background-image: url('ORN paper.png') !important;
+    background-repeat: no-repeat !important;
+    background-position: 0 0 !important;
+    background-size: 210mm 297mm !important;
+
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #print #printPages .print-sheet:last-child{
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  /* Hide IMG paper in generated pages to avoid any partial showing */
+  #print #printPages .paper-bg{ display:none !important; }
+
+  /* Keep invoice content above background */
+  #print #printPages .invoice-frame{ position:relative !important; z-index:1 !important; }
+
+  /* Page numbering */
+  #print #printPages .page-no{
+    position:absolute !important;
+    left:25mm !important;
+    bottom:30mm !important;
+    font-size:10.5px !important;
+    font-weight:700 !important;
+    z-index:5 !important;
+    white-space:nowrap !important;
+    text-align:left !important;
+  }
+}
+
+@media print{
+  #print #printPages .print-sheet .paper-content{
+    padding: var(--safe-top) 24mm var(--safe-bottom) 24mm !important;
+  }
+}
+
+@media print{
+  /* حرّك الإطار ناحية اليمين */
+  #print #printPages .invoice-frame{
+    transform: translateX(5mm) !important; /* زوّد/قلّل الرقم */
+  }
+}
+
+@media print{
+  /* تحريك خلفية ORN paper.png ناحية اليمين */
+  #print #printPages .print-sheet{
+    background-position: 5mm -5mm !important; /* 5mm يمين */
+    bacgrounkd-size: 105% 105% !important; /* كبّر 3% */
+  }
+}
 </style>
 </head>
 <body class="p-3">
@@ -542,7 +628,8 @@ input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4
 <div class="mt-2 d-flex flex-wrap gap-2 align-items-center" data-ledger="restore"><select class="form-select form-select-sm" id="savedInvoices" style="width:260px;"><option value="">اختر فاتورة محفوظة...</option></select><button class="btn btn-outline-primary btn-sm" onclick="loadSelectedInvoice()" type="button">تحميل المحددة</button><button class="btn btn-outline-secondary btn-sm" onclick="refreshInvoicesList()" type="button">تحديث القائمة</button><input class="form-control form-control-sm" id="searchInvoiceNo" placeholder="بحث برقم الفاتورة" style="width:180px;"/><button class="btn btn-outline-success btn-sm" onclick="searchInvoice()" type="button">بحث</button><button class="btn btn-outline-dark btn-sm" onclick="newInvoice()" type="button">فاتورة جديدة</button><span id="ledgerStatus" style="margin-right:10px;font-weight:700;"></span></div></div>
 </div></div>
 <div id="print">
-<main class="print-page"><img alt="ORN Paper" class="paper-bg" src="ORN paper.png"/>
+<div id="printPages"></div>
+<main class="print-page" id="printSingle"><img alt="ORN Paper" class="paper-bg" src="ORN paper.png"/>
 <div class="invoice-frame"><div class="paper-content">
 <h2 class="inv-title">فاتورة مبيعات</h2>
 <section class="meta-grid">
@@ -770,15 +857,31 @@ function renderPrintView(){
   try{ calcFinal(); }catch(e){}
 
   const getVal = (id)=> document.getElementById(id)?.value ?? '';
-  const setText = (id,val)=>{ const el=document.getElementById(id); if(el) el.textContent = val || '—'; };
 
-  setText('p_date', (getVal('date')||'').replaceAll('-','/'));
-  setText('p_invoiceNo', getVal('invoiceNo'));
-  setText('p_customer', getVal('customer'));
-  setText('p_phone', '+' + getVal('phone'));
-  setText('p_address', getVal('address'));
+  // Escape
+  const esc = (s)=> (s??'').toString()
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#039;');
 
-  // الأصناف: نأخذ الاسم + الكمية + سعر الوحدة النهائي + إجمالي الصف
+  const host = document.getElementById('printPages');
+  const tpl = document.getElementById('printSingle');
+  if(!host || !tpl) return;
+
+  // hide template
+  try{ tpl.style.display='none'; }catch(e){}
+
+  // Meta
+  const pDate = (getVal('date')||'').replaceAll('-','/');
+  const pInvoice = getVal('invoiceNo');
+  const pCustomer = getVal('customer');
+  const rawPhone = (getVal('phone')||'').toString().trim();
+  const pPhone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : ('+'+rawPhone)) : '';
+  const pAddress = getVal('address');
+
+  // Items from UI
   const uiRows = document.querySelectorAll('#items tr');
   const itemsData=[];
   uiRows.forEach(r=>{
@@ -786,49 +889,91 @@ function renderPrintView(){
     const qty  = r.cells?.[5]?.querySelector('input')?.value ?? '';
     const unit = r.querySelector('.final')?.textContent?.trim() ?? '';
     const sum  = r.querySelector('.sum')?.textContent?.trim() ?? '';
-    // تجاهل الصف لو الاسم فاضي وكل القيم صفر/فارغة
     const nz = (x)=> (x!=='' && x!=='0' && x!=='0.000');
     if(!name && !nz(qty) && !nz(unit) && !nz(sum)) return;
     itemsData.push({name, qty, unit, sum});
   });
 
-  const tbody = document.getElementById('p_items');
-  if(tbody) tbody.innerHTML='';
+  // Totals from UI
+  const subtotalTxt = document.getElementById('subtotal')?.textContent?.trim() || '—';
+  const discTxt = (document.getElementById('discountVal')?.textContent?.trim() || '');
+  const discNum = discTxt ? parseFloat(discTxt.replace('%','')) : NaN;
+  const discountTxt = isFinite(discNum) ? ('%'+discNum.toFixed(2)) : (discTxt||'—');
+  const afterTxt = document.getElementById('after')?.textContent?.trim() || '—';
+  const taxTxt = document.getElementById('taxVal')?.textContent?.trim() || '—';
+  const deliveryTxt = document.getElementById('deliveryVal')?.textContent?.trim() || '—';
+  const finalTxt = document.getElementById('final')?.textContent?.trim() || '—';
 
-  const maxRows = itemsData.length; // مثل المرجع
-  for(let i=0;i<maxRows;i++){
-    const it = itemsData[i];
-    const tr=document.createElement('tr');
-    if(it){
+  // Pagination
+  const PER_PAGE = 8;
+  const totalItems = itemsData.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PER_PAGE));
+
+  host.innerHTML='';
+
+  // We will reuse inner printable structure from template: take its .invoice-frame as HTML
+  const templateFrame = tpl.querySelector('.invoice-frame');
+  if(!templateFrame) return;
+
+  for(let p=0; p<totalPages; p++){
+    const isLast = (p===totalPages-1);
+
+    // create clean page container
+    const page = document.createElement('div');
+    page.className = 'print-sheet';
+
+    // clone invoice frame
+    const frame = templateFrame.cloneNode(true);
+
+    // fill meta
+    const q = (sel)=> frame.querySelector(sel);
+    if(q('#p_date')) q('#p_date').textContent = pDate || '—';
+    if(q('#p_invoiceNo')) q('#p_invoiceNo').textContent = pInvoice || '—';
+    if(q('#p_customer')) q('#p_customer').textContent = pCustomer || '—';
+    if(q('#p_phone')) q('#p_phone').textContent = pPhone || '—';
+    if(q('#p_address')) q('#p_address').textContent = pAddress || '—';
+
+    // fill items
+    const tbody = q('#p_items');
+    if(tbody) tbody.innerHTML='';
+    const start = p*PER_PAGE;
+    const end = Math.min(start+PER_PAGE, totalItems);
+    for(let i=start;i<end;i++){
+      const it = itemsData[i];
+      const tr = document.createElement('tr');
       tr.innerHTML = `
         <td class="num">${i+1}</td>
-        <td class="name">${escapeHtml(it.name)}</td>
+        <td class="name">${esc(it.name)}</td>
         <td class="money">${it.unit}</td>
         <td class="num">${it.qty}</td>
         <td class="money">${it.sum}</td>
       `;
-    }else{
-      tr.innerHTML = `
-        <td class="num">${i+1}</td>
-        <td class="name">&nbsp;</td>
-        <td class="money">&nbsp;</td>
-        <td class="num">&nbsp;</td>
-        <td class="money">&nbsp;</td>
-      `;
+      tbody.appendChild(tr);
     }
-    tbody.appendChild(tr);
-  }
 
-  // الملخص: ننسخ النص الجاهز من شاشة الإدخال
-  setText('p_subtotal', document.getElementById('subtotal')?.textContent?.trim() || '—');
-  // تنسيق الخصم مثل المرجع: %0.00
-  const discTxt = (document.getElementById('discountVal')?.textContent?.trim() || '');
-  const discNum = discTxt ? parseFloat(discTxt.replace('%','')) : NaN;
-  setText('p_discount', isFinite(discNum) ? ('%'+discNum.toFixed(2)) : (discTxt || '—'));
-  setText('p_after', document.getElementById('after')?.textContent?.trim() || '—');
-  setText('p_tax', document.getElementById('taxVal')?.textContent?.trim() || '—');
-  setText('p_delivery', document.getElementById('deliveryVal')?.textContent?.trim() || '—');
-  setText('p_final', document.getElementById('final')?.textContent?.trim() || '—');
+    // totals only on last
+    const totalsWrap = frame.querySelector('.totals-wrap');
+    if(!isLast){
+      if(totalsWrap) totalsWrap.style.display='none';
+    }else{
+      if(totalsWrap) totalsWrap.style.display='';
+      if(q('#p_subtotal')) q('#p_subtotal').textContent = subtotalTxt;
+      if(q('#p_discount')) q('#p_discount').textContent = discountTxt;
+      if(q('#p_after')) q('#p_after').textContent = afterTxt;
+      if(q('#p_tax')) q('#p_tax').textContent = taxTxt;
+      if(q('#p_delivery')) q('#p_delivery').textContent = deliveryTxt;
+      if(q('#p_final')) q('#p_final').textContent = finalTxt;
+    }
+
+    // page number inside page (absolute)
+    const pn = document.createElement('div');
+    pn.className = 'page-no';
+    pn.textContent = `صفحة ${p+1} من ${totalPages}`;
+    page.appendChild(pn);
+
+    page.appendChild(frame);
+    host.appendChild(page);
+  }
 }
 
 window.addEventListener('beforeprint', renderPrintView);
