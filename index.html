@@ -1,0 +1,1586 @@
+<!DOCTYPE html>
+
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>فاتورة</title>
+<!-- Bootstrap + Cairo (واجهة الإدخال) -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<style>
+
+/* ===== Local Arabic Font (same folder) ===== */
+@font-face{
+  font-family: "ArabicFont";
+  src: url("./ArabicFont.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Apply ArabicFont everywhere (UI + Print) */
+html, body, #ui, #print,
+input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4, h5, h6 {
+  font-family: "ArabicFont", "Cairo", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif !important;
+}
+
+/* =========================
+   واجهة الإدخال (Modern)
+   ========================= */
+#ui{font-family:'ArabicFont',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+
+#ui .box{background: rgba(255,255,255,.88); backdrop-filter: blur(8px); border: 1px solid rgba(15,23,42,.08);
+  padding:22px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
+#ui h4{font-weight:700;align-items:center;gap:10px;margin:15px;text-align: center;padding-bottom: 20px;}
+/* #ui h4::before{content:"";width:10px;height:10px;border-radius:999px;background:linear-gradient(135deg,#0d6efd,#7c3aed);box-shadow:0 0 0 6px rgba(13,110,253,.12)}*/
+
+#ui label{font-weight:700;color:#0f172a;margin-bottom: 15px;}
+#ui .form-control,#ui .form-select{border-radius:12px;border:1px solid rgba(15,23,42,.12);padding:10px 12px;box-shadow:none}
+#ui .form-control:focus,#ui .form-select:focus{border-color:rgba(13,110,253,.55);box-shadow:0 0 0 4px rgba(13,110,253,.15)}
+
+/* 1) الليبل جنب الحقل */
+#ui .row.g-2 > [class^="col-"]{display:flex;align-items:center;gap:12px}
+#ui .row.g-2 > [class^="col-"] > label{flex:0 0 120px;white-space:nowrap}
+#ui .row.g-2 > .col-12 > label{flex-basis:140px}
+#ui .row.g-2 > [class^="col-"] > .form-control,
+#ui .row.g-2 > [class^="col-"] > .form-select{flex:1 1 auto}
+#ui .row.g-2{row-gap:12px}
+
+/* 3) ضبط سهم القائمة المنسدلة في RTL */
+#ui .form-select{min-height:44px;line-height:1.4;padding-left:2.4rem;padding-right:12px;background-position:left .85rem center}
+
+#ui table.table{border-radius:16px;overflow:hidden;box-shadow:0 8px 18px rgba(0,0,0,.05)}
+#ui table.table thead th{background:linear-gradient(180deg,#f8fbff 0%,#eef5ff 100%);font-weight:900;border-bottom:1px solid rgba(15,23,42,.1)}
+#ui table.table td,#ui table.table th{border-color:rgba(15,23,42,.08)!important}
+#ui table.table tbody tr:hover{background:rgba(13,110,253,.035)}
+
+#ui .table input{border-radius:10px;padding:6px 8px;border:1px solid rgba(15,23,42,.12);background:#fff;text-align: center;}
+#ui .table input:focus{border-color:rgba(124,58,237,.55);box-shadow:0 0 0 3px rgba(124,58,237,.14)}
+#ui .autoCalc{font-weight:700}
+
+#ui .smallSum{background:linear-gradient(180deg,#fff 0%,#f7fbff 100%);border:1px solid rgba(15,23,42,.1);border-radius:14px;padding:10px 12px}
+
+/* 2) الملخص المالي يأخذ نصف الشاشة */
+#ui table.sumtbl{width:56% !important;margin-inline-start:auto;border-radius:16px;overflow:hidden;border:1px solid rgba(15,23,42,.08); table-layout: fixed;}
+#ui .sumtbl td{border-color:rgba(15,23,42,.08)}
+#ui .sumtbl td:first-child{background:#f8fbff;font-weight:700}
+
+#ui .btn{border-radius:12px;font-weight:700}
+#ui .btn-success{background:linear-gradient(135deg,#16a34a,#22c55e);border:none}
+#ui .btn-dark{background:linear-gradient(135deg,#0f172a,#111827);border:none}
+#ui .btn-outline-primary{border-width:2px}
+
+@media (max-width: 992px){
+  #ui table.sumtbl{width:100% !important;}
+  #ui .row.g-2 > [class^="col-"]{flex-direction:column;align-items:stretch;gap:6px}
+  #ui .row.g-2 > [class^="col-"] > label{flex-basis:auto}
+}
+
+
+/* =========================
+   قالب الطباعة (مرجع ORN)
+   ========================= */
+#print{display:none; font-family:'ArabicFont',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+#print *{box-sizing:border-box;}
+
+.print-page{width:210mm; min-height:297mm; margin:0 auto; padding:0; background:#fff;}
+@media print{
+  .print-page{
+    height: 290mm;
+    min-height: auto;
+    overflow: hidden;
+  }
+}
+.invoice-frame{
+  position:relative;
+  width: 92%;
+  margin: 0 auto;
+  margin-top: 12mm;
+  border: 2px solid #111827;
+  border-radius: 20px;
+  padding: 10mm 10mm 16mm 10mm;
+  overflow:hidden;
+}
+
+/* علامة مائية 
+.invoice-frame::before{
+  content:"ORN";
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size: 120px;
+  font-weight: 700;
+  color: #111827;
+  opacity: .06;
+  transform: rotate(-8deg);
+  pointer-events:none;
+}
+*/
+.inv-head{position:relative; z-index:1; display:grid; grid-template-columns: 120px 1fr 150px; gap:10px; align-items:start;}
+.brand{display:flex; flex-direction:column; align-items:flex-start; gap:6px;}
+.logo{height:46px; width:auto;}
+.company{ text-align:center; }
+.co-ar{font-weight:700; font-size:12.5px;}
+.co-en{font-weight:400; font-size:11.5px;}
+.regs{font-weight:400; font-size:11.5px; line-height:1.35;}
+
+.inv-title{position:relative; z-index:1; text-align:center; font-weight:700; font-size:16px; margin:6mm 0 4mm;}
+
+.meta-grid{position:relative; z-index:1; display:grid; grid-template-columns: 1fr 1fr; gap:2mm 8mm; margin-bottom:4mm; font-size:11.5px;}
+.meta-grid .meta-row{display:flex; gap:6px;}
+.meta-grid .meta-row.full{grid-column:1/-1;}
+.meta-grid .k{font-weight:700; min-width:90px;}
+.meta-grid .c{font-weight:700;}
+.meta-grid .v{font-weight:400; flex:1;}
+
+.p-items{position:relative; z-index:1; width:100%; border-collapse:collapse; table-layout:fixed; font-size:11.5px;}
+.p-items th,.p-items td{border:1px solid #111827; padding:5px 6px; text-align:center; vertical-align:middle;}
+.p-items thead th{background:#f3f4f6; font-weight:700;text-align: center;}
+.p-items td.name{ text-align:center; }
+.p-items td.money, .p-items td.num{direction:ltr; unicode-bidi:plaintext; font-weight:800;}
+
+.totals-wrap{position:relative; z-index:1; display:flex; gap:10mm; align-items:flex-start; margin-top:6mm;}
+.p-totals{width: 58%; border-collapse:collapse; font-size:11.5px;}
+.p-totals td{border-top:0px solid #111827; padding:6px 8px;border-bottom:1px solid #111827;}
+.p-totals td.k{ font-weight:700; width:55%;}
+.p-totals td.c{width:6%; text-align:center; font-weight:700;}
+.p-totals td.v{width:39%; direction:ltr; unicode-bidi:plaintext; font-weight:700;}
+
+.stamp{margin-top:8mm; font-weight:400; font-size:28px; border:2px solid #111827; padding:8px 14px; transform: rotate(-8deg); opacity:.9;}
+
+.inv-foot{position:absolute; left:12mm; right:12mm; bottom:7mm; z-index:1; display:flex; justify-content:space-between; gap:10px; font-weight:400; font-size:10.5px;}
+.foot-item{white-space:nowrap;}
+
+.ribbon{position:absolute; right:0; bottom:0; width:52mm; height:16mm; background:#111827; clip-path: polygon(0 0, 85% 0, 100% 50%, 85% 100%, 0 100%); z-index:0;}
+
+@page{ margin:0; }
+@media print{
+  #ui{display:none !important;}
+  #print{display:block !important;}
+  *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+}
+
+  
+
+/* ==========================================================
+   ضبط الطباعة حسب طلبك (تعديل الطباعة فقط)
+   1) إزالة إطار التصميم (بدون Border/Watermark/فوتر/شريط)
+   2) حجم الخط العام 12pt
+   3) عنوان "فاتورة مبيعات" 16pt
+   4) الملخص المالي أسفل يسار
+   5) نسبة الخصم Bold + محاذاة عمود القيم
+   6) تلوين عمود الصنف وسعر الوحدة مثل صف العناوين
+   ========================================================== */
+
+:root{
+  --print-font: 10pt;
+  --print-meta: 10pt;
+  --print-title: 14pt;
+  --print-row-pad-y: 1.5mm;
+}
+
+@page{ size:A4; margin:0; }
+
+/* (1) إزالة الإطار والديكور */
+#print .invoice-frame{
+  border:none !important;
+  border-radius:0 !important;
+  padding: 0 20px 0 50px !important;
+  margin-top:100px !important;
+  width:100% !important;
+}
+#print .invoice-frame::before{ content:none !important; }
+#print .stamp, #print .inv-foot, #print .ribbon{ display:none !important; }
+
+/* (2) حجم الخط */
+#print .meta-grid{ font-size: var(--print-meta) !important; }
+#print .p-items, #print .p-totals{ font-size: var(--print-font) !important; }
+
+/* (3) العنوان */
+#print .inv-title{ font-size: var(--print-title) !important; margin: 4mm 0 3mm !important; }
+
+/* (4) الملخص ناحية اليسار (RTL: استخدم flex-end للوصول لليسار) */
+#print .totals-wrap{ justify-content:flex-end !important; }
+
+/* (5) نسبة الخصم بولد + محاذاة عمود القيم */
+#print .p-totals tr:nth-child(2) td{ font-weight: 700 !important; }
+#print .p-totals td.v{ text-align: right !important; }
+
+/* محاذاة الهاتف يمين مع LTR */
+#print #p_phone{ text-align:right !important; direction:ltr !important; unicode-bidi:plaintext !important; }
+
+/* تقليل ارتفاع صفوف جدول الأصناف */
+#print .p-items th, #print .p-items td{ padding: var(--print-row-pad-y) 6px !important; }
+
+/* (6) تلوين عمود الصنف + سعر الوحدة بنفس لون صف العناوين */
+#print .p-items tbody td:nth-child(1){
+  background:#f3f4f6 !important;
+}
+
+
+
+/* ==========================================================
+   UI PATCH v2 (إدخال فقط) — لا تغيير في الطباعة الآن
+   - إجمالي الأصناف: بولد + أحمر غامق + يسار
+   - كلمة المستحق بولد داخل الملخص المالي
+   - زيادة ارتفاع صفوف الملخص + حدود مثل جدول الأصناف
+   - توحيد محاذاة الليبل/الحقول (العنوان على نفس خط الباقي)
+   - ترتيب الحقول: التاريخ + العميل في صف واحد
+   ========================================================== */
+
+/* توحيد عرض الليبل حتى لا يتقدم عنوان العميل */
+#ui .row.g-2 > [class^="col-"] > label{ flex: 0 0 120px !important; }
+#ui .row.g-2 > .col-12 > label{ flex: 0 0 120px !important; }
+
+/* إجمالي الأصناف */
+#ui .smallSum{ color:#8b0000 !important; font-weight:700 !important; }
+#ui #itemsTotal{ color:#8b0000 !important; font-weight:700 !important; }
+#ui .d-flex.justify-content-start.mb-3{ justify-content:flex-end !important; } /* RTL => يسار */
+
+/* ملخص مالي (sumtbl): حدود مثل جدول الأصناف + صفوف أعلى */
+#ui table.sumtbl{ border:1px solid rgba(15,23,42,.12) !important; border-radius:16px; overflow:hidden; }
+#ui table.sumtbl td{ border:1px solid rgba(15,23,42,.12) !important; padding:12px 12px !important; }
+#ui table.sumtbl td:first-child{ background:#f8fbff; font-weight:700 !important; }
+
+/* كلمة المستحق بولد */
+#ui table.sumtbl tr:last-child td:first-child b{ font-weight:700 !important; }
+
+
+/* =====================
+   UI فقط (بدون لمس الطباعة)
+   المطلوب فقط:
+   1) جدول الأصناف كله محاذاة وسط
+   2) خانة اسم الصنف تملأ عمودها بالكامل
+   3) عمل حدود للملخص المالي (الجدول اللي تحت)
+   ===================== */
+
+/* 1) محاذاة جدول الأصناف (الإدخال) في الوسط */
+#ui table.table.table-bordered,
+#ui table.table.table-bordered th,
+#ui table.table.table-bordered td{
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+/* 2) خانة إدخال اسم الصنف تملأ العمود بالكامل */
+#ui #items td:nth-child(2) input{
+  width: 100% !important;
+  display: block !important;
+  box-sizing: border-box !important;
+}
+
+/* 3) حدود للملخص المالي فقط (sumtbl) */
+#ui table.sumtbl{
+  border: 1px solid rgba(15,23,42,.18) !important;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+
+
+/* ===== Print tweak (حسب طلب محمد): تصغير الخط درجتين + زيادة تباعد بيانات العميل ===== */
+@media print{
+  /* زيادة المسافة بين أسطر بيانات العميل */
+  #print .meta-grid{ 
+    row-gap: 5mm !important; /* مسافة رأسية أكبر بين السطور */
+    column-gap: 10mm !important;
+  }
+  #print .meta-grid .meta-row{ line-height: 1.65 !important; }
+  #print .meta-grid .k, #print .meta-grid .c, #print .meta-grid .v{ line-height: 1.65 !important; }
+}
+@page{
+  size: A4;
+  margin: 0;
+}
+
+@media print{
+  html, body{
+    height: 297mm;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* بدل min-height خليه height ثابت */
+  .print-page{
+    height: 297mm !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    page-break-after: avoid !important;
+  }
+
+  /* مهم جدًا: امنع أي margin-top يزود 1px */
+  #print .invoice-frame{
+    margin-top: 150px !important;
+  }
+}
+
+
+/* =========================
+   PRINT: إضافة إطار الورقة الرسمية (Overlay Image)
+   - الإطار يظهر دائمًا لأنه صورة IMG وليس background
+   - المحتوى داخل الإطار بواسطة Safe Area
+   ========================= */
+
+:root{
+  /* عدّل القيم لو احتجت تحريك المحتوى داخل الإطار */
+  --safe-top: 35mm;
+  --safe-right: 16mm;
+  --safe-bottom: 24mm;
+  --safe-left: 24mm;
+}
+
+#print .paper-bg{
+  display:none;
+}
+
+@media print{
+  /* صورة الإطار تغطي A4 بالكامل */
+  #print .paper-bg{
+    display:block !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 210mm;
+    height: 297mm;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  /* نجعل محتوى الفاتورة فوق الصورة */
+  #print .invoice-frame{
+    position: relative !important;
+    z-index: 1 !important;
+    width: 210mm !important;
+    height: 297mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+  }
+
+  #print .paper-content{
+    padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left) !important;
+  }
+}
+
+
+/* Ledger restore controls (UI فقط) */
+#ui [data-ledger="restore"]{padding-top:6px;border-top:1px dashed rgba(15,23,42,.15);}
+#ui #savedInvoices{min-width:260px;}
+
+
+  /*         بداية كود اصلاح تنسيق الموبايل حذف لو مشتغلش    */
+
+  /* ===========================
+   MOBILE RESPONSIVE PATCH v1
+   Place this at the VERY END of <style>
+   - Fixes poor mobile layout for #ui (input view)
+   - Keeps print layout untouched
+   =========================== */
+
+/* 0) Ensure print section never affects screen view */
+@media screen{
+  #print{ display:none !important; } /* print template hidden on screen */ 
+}
+
+/* 1) Mobile layout adjustments */
+@media (max-width: 768px){
+
+  /* Container spacing */
+  body{ padding: 12px !important; }
+  #ui .container.box{ padding:16px !important; border-radius:14px !important; }
+
+  /* Headline */
+  #ui h4{ margin:10px 0 14px !important; padding-bottom:10px !important; font-size:18px !important; }
+
+  /* 2) Stop forcing label+field in one row on mobile */
+  #ui .row.g-2 > [class^="col-"]{
+    display:block !important;
+    align-items:unset !important;
+    gap:0 !important;
+  }
+  #ui .row.g-2 > [class^="col-"] > label{
+    display:block !important;
+    flex:unset !important;
+    width:100% !important;
+    margin-bottom:6px !important;
+    white-space:normal !important;
+  }
+  #ui .row.g-2 > [class^="col-"] > .form-control,
+  #ui .row.g-2 > [class^="col-"] > .form-select{
+    width:100% !important;
+    flex:unset !important;
+  }
+
+  /* 3) Inputs comfortable for touch + prevent iOS zoom */
+  #ui input.form-control,
+  #ui select.form-select,
+  #ui textarea.form-control{
+    min-height:48px !important;
+    font-size:16px !important;
+  }
+  #ui .btn{
+    min-height:46px !important;
+    font-size:15px !important;
+  }
+
+  /* 4) Make action buttons stack nicely */
+  #ui .mt-3.no-print,
+  #ui .d-flex.justify-content-end.mt-3,
+  #ui .d-flex.justify-content-start.mb-3{
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:10px !important;
+  }
+  #ui .mt-3.no-print .btn{ width:100% !important; }
+
+  /* 5) Fix items table overflow: horizontal scroll */
+  #ui .table-responsive{
+    overflow-x:auto !important;
+    -webkit-overflow-scrolling:touch;
+    border-radius:14px;
+  }
+  /* If you don't wrap table with .table-responsive, still allow scroll */
+  #ui table.table.table-bordered{
+    display:block !important;
+    overflow-x:auto !important;
+    -webkit-overflow-scrolling:touch;
+    white-space:nowrap;
+  }
+  /* Keep a minimum width so columns don't crush */
+  #ui table.table.table-bordered{ min-width: 720px; }
+
+  /* 6) Summary table full width on mobile */
+  #ui table.sumtbl{
+    width:100% !important;
+  }
+
+  /* 7) Ledger restore controls: full width & wrap */
+  #ui [data-ledger="restore"]{
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:8px !important;
+  }
+  #ui #savedInvoices,
+  #ui #searchInvoiceNo{
+    width:100% !important;
+    min-width:0 !important;
+  }
+}
+
+
+/* ================================
+   PRINT BACKGROUND PAGINATION PATCH v2 (PRINT ONLY)
+   - ORN paper.png as FULL-PAGE background (no-repeat, exact A4 size)
+   - Prevents background splitting: each page is fixed 210mm x 297mm
+   - Prints ONLY generated pages (#printPages)
+   - Keeps SAFE margins already defined in the file (no changes)
+   - Page number position: left 2.5cm, bottom 3cm
+   IMPORTANT: In Chrome you MUST enable "Background graphics" to see CSS backgrounds.
+   ================================ */
+@media print{
+  /* Release legacy single-page lock */
+  html, body{ height:auto !important; overflow:visible !important; }
+
+  /* Hide the original single print template page */
+  #print #printSingle{ display:none !important; }
+
+  /* Ensure only generated pages are shown */
+  #print #printPages{ display:block !important; }
+
+  /* Generated page (A4) */
+  #print #printPages .print-sheet{
+    display:block !important;
+    width:210mm !important;
+    height:297mm !important;
+    margin:0 !important;
+    padding:0 !important;
+    position:relative !important;
+    overflow:hidden !important;
+    page-break-after: always !important;
+    break-after: page !important;
+
+    /* FULL background once per page */
+    background-image: url('ORN paper.png') !important;
+    background-repeat: no-repeat !important;
+    background-position: 0 0 !important;
+    background-size: 210mm 297mm !important;
+
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #print #printPages .print-sheet:last-child{
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  /* Hide IMG paper in generated pages to avoid any partial showing */
+  #print #printPages .paper-bg{ display:none !important; }
+
+  /* Keep invoice content above background */
+  #print #printPages .invoice-frame{ position:relative !important; z-index:1 !important; }
+
+  /* Page numbering */
+  #print #printPages .page-no{
+    position:absolute !important;
+    left:25mm !important;
+    bottom:30mm !important;
+    font-size:10.5px !important;
+    font-weight:700 !important;
+    z-index:5 !important;
+    white-space:nowrap !important;
+    text-align:left !important;
+  }
+}
+
+
+@media print{
+  /* حرّك الإطار ناحية اليمين */
+  #print #printPages .invoice-frame{
+    transform: translateX(0mm) !important; /* زوّد/قلّل الرقم */
+    transform: translateY(50mm);
+  }
+}
+
+@media print{
+  /* نزّل المحتوى (العنوان + البيانات + الجدول) داخل الصفحة الأولى فقط */
+  #print #printPages .print-sheet:first-child .paper-content{
+    padding-top: calc(var(--safe-top) + 5mm) !important;
+  }
+}
+
+@media print{
+  /* أول صفحة مولّدة */
+  #print #printPages .print-sheet:first-child{
+    background-position: 5mm 0mm !important;
+    background-size: 100% 100% !important; /* كبّر 3% */
+  }
+
+  /* باقي الصفحات */
+  #print #printPages .print-sheet:not(:first-child){
+    background-position: 5mm 0mm !important;
+    background-size: 100% 100% !important; /* كبّر 3% */
+      --safe-top: 40mm;
+      --safe-right: 16mm;
+      --safe-bottom: 16mm;
+      --safe-left: 24mm;
+  }
+}
+
+
+#ui{ padding:25px !important; }
+
+
+/* ===== LOGIN SCREEN (v4) ===== */
+#loginScreen{
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  background:
+    radial-gradient(900px 500px at 15% 20%, rgba(34,197,94,.20), transparent 60%),
+    radial-gradient(900px 500px at 85% 50%, rgba(59,130,246,.16), transparent 62%),
+    linear-gradient(135deg, #0b1220 0%, #0f172a 60%, #0b1220 100%);
+  padding: 18px;
+}
+#loginScreen .login-wrap{ width: min(460px, 96vw); }
+#loginCard.login-card{
+  background: rgba(255,255,255,.95);
+  border-radius: 22px;
+  padding: 26px 24px 20px;
+  border: 1px solid rgba(255,255,255,.35);
+  box-shadow: 0 30px 90px rgba(0,0,0,.55);
+  position: relative;
+  overflow: hidden;
+}
+#loginCard.login-card::before{
+  content:"";
+  position:absolute;
+  inset: -80px -70px auto auto;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle at 30% 30%, rgba(34,197,94,.55), transparent 62%);
+  transform: rotate(12deg);
+  opacity: .7;
+}
+#loginCard.login-card::after{
+  content:"";
+  position:absolute;
+  inset: auto auto -110px -110px;
+  width: 320px;
+  height: 320px;
+  background: radial-gradient(circle at 60% 40%, rgba(59,130,246,.40), transparent 68%);
+  opacity: .75;
+}
+#loginCard.login-card > *{ position: relative; z-index: 1; }
+#loginCard .login-badge{
+  width: 62px;
+  height: 62px;
+  margin: 0 auto 12px;
+  border-radius: 18px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: linear-gradient(135deg, #16a34a, #22c55e);
+  color:#fff;
+  font-weight: 900;
+  letter-spacing: .6px;
+  box-shadow: 0 14px 40px rgba(34,197,94,.35);
+}
+#loginCard .login-title{
+  text-align:center;
+  font-weight: 900;
+  font-size: 20px;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+#loginCard .login-sub{
+  text-align:center;
+  font-size: 13px;
+  color: #475569;
+  margin-bottom: 14px;
+}
+#loginCard .form-control{ border-radius: 14px; padding: 12px 12px; }
+#loginCard .btn{ border-radius: 14px; }
+#loginMsg{ min-height: 20px; font-weight: 800; text-align: center;color: red !important;}
+#loginCard .login-hint{ margin-top: 10px; font-size: 12px; color:#64748b; text-align:center; }
+
+</style>
+</head>
+<body>
+<div id="loginScreen">
+  <div class="login-wrap">
+    <div id="loginCard" class="login-card">
+      <div class="login-badge">ORN</div>
+      <div class="login-title">تسجيل الدخول</div>
+      <div class="login-sub">أدخل كلمة السر للوصول إلى الفواتير والدفتر</div>
+
+      <form id="loginForm" novalidate>
+        <div class="mb-2">
+          <label class="form-label fw-bold" for="loginPass">كلمة السر</label>
+          <div class="input-group gap-2">
+            <input id="loginPass" type="password" class="form-control" placeholder="••••••••" autocomplete="current-password" required>
+            <button id="togglePass" class="btn btn-outline-secondary" type="button" aria-label="إظهار/إخفاء كلمة السر">👁️</button>
+          </div>
+        </div>
+
+        <button id="btnLogin" class="btn btn-success w-100 mt-2" type="submit">
+          <span id="loginBtnText">دخول</span>
+          <span id="loginSpinner" class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
+        </button>
+
+        <div id="loginMsg" class="mt-2"></div>
+        <div class="login-hint">لن يتم حفظ كلمة السر على الجهاز.</div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+async function login(){
+
+  const p = document.getElementById("loginPass").value.trim();
+
+  if(!p){
+ document.getElementById("loginMsg").innerText="اكتب كلمة السر";
+ return;
+ }
+  // UI loading
+  const btn = document.getElementById('btnLogin');
+  const sp = document.getElementById('loginSpinner');
+  const bt = document.getElementById('loginBtnText');
+  if(btn) btn.disabled = true;
+  if(sp) sp.classList.remove('d-none');
+  if(bt) bt.textContent = 'جارٍ التحقق...';
+  document.getElementById('loginMsg').innerText = '';
+  document.getElementById('loginMsg').style.color = '#0f172a';
+
+ API_PASSWORD = p;
+
+  try{
+
+    const res = await fetch(
+      PROXY_URL + "/api/list",
+      {
+        headers:{
+          "Authorization":"Bearer " + API_PASSWORD
+        }
+      }
+    );
+
+    const data = await res.json().catch(()=>null);
+
+    if(!res.ok || data?.error){
+      document.getElementById("loginMsg").innerText="كلمة السر غير صحيحة";
+  // UI reset
+  const btn = document.getElementById('btnLogin');
+  const sp = document.getElementById('loginSpinner');
+  const bt = document.getElementById('loginBtnText');
+  if(btn) btn.disabled = false;
+  if(sp) sp.classList.add('d-none');
+  if(bt) bt.textContent = 'دخول';
+
+API_PASSWORD="";
+return;
+    }
+
+    document.getElementById("loginScreen").style.display="none";
+IS_AUTH = true;
+  // UI reset
+  const btn = document.getElementById('btnLogin');
+  const sp = document.getElementById('loginSpinner');
+  const bt = document.getElementById('loginBtnText');
+  if(btn) btn.disabled = false;
+  if(sp) sp.classList.add('d-none');
+  if(bt) bt.textContent = 'دخول';
+
+
+    if(typeof refreshInvoicesList === "function"){
+      setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+ refreshInvoicesList();
+    }
+
+    if(typeof setNextInvoiceNo === "function"){
+      setNextInvoiceNo();
+    }
+
+  }catch(e){
+    document.getElementById("loginMsg").innerText="خطأ في الاتصال بالسيرفر";
+  // UI reset
+  const btn = document.getElementById('btnLogin');
+  const sp = document.getElementById('loginSpinner');
+  const bt = document.getElementById('loginBtnText');
+  if(btn) btn.disabled = false;
+  if(sp) sp.classList.add('d-none');
+  if(bt) bt.textContent = 'دخول';
+
+  }
+
+}
+</script>
+<div id="ui"><div class="container box">
+<h4 class="mb-3">فاتورة مبيعات</h4>
+<div class="row g-2 mb-2"><div class="col-md-6"><label>التاريخ</label><input class="form-control" id="date" type="date"/></div><div class="col-md-6"><label>العميل</label><input class="form-control" id="customer"/></div>
+<div class="col-md-6">
+  <label>رقم الفاتورة</label>
+  <input class="form-control" id="invoiceNo"/>
+</div>
+
+<div class="col-md-6">
+  <label>الهاتف</label>
+  <input class="form-control" id="phone"/>
+</div>
+
+<div class="col-12">
+  <label>عنوان العميل</label>
+  <input class="form-control" id="address"/>
+</div>
+
+<!-- ✅ الملاحظات آخر حاجة -->
+<div class="col-12">
+  <label>ملاحظات</label>
+  <textarea
+    class="form-control"
+    id="notes"
+    rows="2"
+    placeholder="اكتب ملاحظات الفاتورة هنا...">
+  </textarea>
+</div></div>
+<table class="table table-bordered">
+<thead><tr>
+<th style="width:40px">#</th>
+<th>الصنف</th>
+<th style="width:110px">الأساسي</th>
+<th style="width:110px">بعد الخصم</th>
+<th style="width:110px">سعر الوحدة (د.ك)</th>
+<th style="width:70px">العدد</th>
+<th style="width:120px">الإجمالي (د.ك)</th>
+<th style="width:60px">حذف</th>
+</tr></thead>
+<tbody id="items"></tbody></table>
+<button class="btn btn-outline-primary btn-sm mb-2 no-print" onclick="addRow()">+ إضافة صنف</button>
+<div class="d-flex justify-content-start mb-3">
+<div class="smallSum">إجمالي الأصناف: <span class="autoCalc" id="itemsTotal">0.000</span></div>
+</div>
+<div class="row g-2">
+<div class="col">
+<label>طريقة الخصم</label>
+<select class="form-select" id="discountMode" onchange="calcItems()">
+<option value="none">بدون خصم</option>
+<option value="items">خصم على الأصناف</option>
+<option value="invoice">خصم كامل الفاتورة</option>
+</select>
+</div>
+<div class="col">
+<label>خصم يدوي %</label>
+<input class="form-control" id="manualDiscount" oninput="calcItems()" type="number" value="0"/>
+</div>
+<div class="col">
+<label>خصم تلقائي %</label>
+<input class="form-control autoCalc" disabled="" id="autoDiscount" type="text"/>
+</div>
+<div class="col">
+<label>الإجمالي المطلوب</label>
+<input class="form-control" id="targetTotal" oninput="calcItems()" type="number"/>
+</div>
+</div>
+<div class="row g-2 mt-2">
+<div class="col"><label>الضريبة</label><input class="form-control" id="tax" type="number" value="0"/></div>
+<div class="col"><label>التوصيل</label><input class="form-control" id="delivery" type="number" value="0"/></div>
+</div>
+<div class="d-flex justify-content-end mt-3">
+<button class="btn btn-success calcBtn" onclick="calcFinal()">احسب الفاتورة</button>
+</div>
+<table class="sumtbl mt-2 w-100">
+<tr><td>الإجمالي الفرعي</td><td class="autoCalc" id="subtotal">—</td></tr>
+<tr><td>نسبة الخصم</td><td class="autoCalc" id="discountVal">—</td></tr>
+<tr><td>بعد الخصم</td><td class="autoCalc" id="after">—</td></tr>
+<tr><td>الضريبة</td><td class="autoCalc" id="taxVal">—</td></tr>
+<tr><td>التوصيل</td><td class="autoCalc" id="deliveryVal">—</td></tr>
+<tr><td><b>المستحق</b></td><td class="autoCalc"><b id="final">—</b></td></tr>
+</table>
+<div class="mt-3 no-print">
+<div class="d-flex gap-2">
+  <button class="btn btn-dark" onclick="window.print()">طباعة</button>
+  <button class="btn btn-success" onclick="exportJSON()">JSON</button>
+  <button class="btn btn-warning" data-ledger="save" onclick="saveToLedger()" type="button">حفظ في الدفتر</button>
+  <button class="btn btn-secondary" onclick="fileInput.click()">استيراد</button>
+</div>
+<input hidden="" id="fileInput" onchange="importJSON(event)" type="file"/>
+<div class="mt-2 d-flex flex-wrap gap-2 align-items-center" data-ledger="restore">
+  <select class="form-select form-select-sm" id="savedInvoices" style="width:260px;">
+    <option value="">اختر فاتورة محفوظة...</option>
+  </select>
+
+  <button class="btn btn-outline-primary btn-sm" onclick="loadSelectedInvoice()" type="button">
+    تحميل المحددة
+  </button>
+
+  <!-- ✅ زر جديد: حذف المحددة -->
+  <button class="btn btn-outline-danger btn-sm" onclick="deleteSelectedInvoice()" type="button">
+    حذف المحددة
+  </button>
+
+  <button class="btn btn-outline-secondary btn-sm" onclick="refreshInvoicesList()" type="button">
+    تحديث القائمة
+  </button>
+
+  <input class="form-control form-control-sm" id="searchInvoiceNo" placeholder="بحث برقم الفاتورة" style="width:180px;"/>
+
+  <button class="btn btn-outline-success btn-sm" onclick="searchInvoice()" type="button">
+    بحث
+  </button>
+
+  <button class="btn btn-outline-dark btn-sm" onclick="newInvoice()" type="button">
+    فاتورة جديدة
+  </button>
+
+  <span id="ledgerStatus" style="margin-right:10px;font-weight:700;"></span>
+</div>
+</div></div></div>
+<div id="print">
+<div id="printPages"></div>
+<main class="print-page" id="printSingle"><img alt="ORN Paper" class="paper-bg" src="ORN paper.png"/>
+<div class="invoice-frame"><div class="paper-content">
+<h2 class="inv-title">فاتورة مبيعات</h2>
+<section class="meta-grid">
+<div class="meta-row"><span class="k">التاريخ</span><span class="c">:</span><span class="v" id="p_date">—</span></div>
+<div class="meta-row"><span class="k">رقم الفاتورة</span><span class="c">:</span><span class="v" id="p_invoiceNo">—</span></div>
+<div class="meta-row"><span class="k">العميل</span><span class="c">:</span><span class="v" id="p_customer">—</span></div>
+<div class="meta-row"><span class="k">رقم الهاتف</span><span class="c">:</span><span class="v" id="p_phone" style="direction:ltr;unicode-bidi:plaintext;">—</span></div>
+<div class="meta-row full"><span class="k">العنوان</span><span class="c">:</span><span class="v" id="p_address">—</span></div>
+<div class="meta-row full"><span class="k">ملاحظات</span><span class="c">:</span><span class="v" id="p_notes">—</span></div>
+</section>
+<table aria-label="الأصناف" class="p-items">
+<thead>
+<tr>
+<th style="width:8%">#</th>
+<th>الصنف</th>
+<th style="width:18%">سعر الوحدة<br/>د.ك</th>
+<th style="width:12%">العدد</th>
+<th style="width:18%">الإجمالى<br/>د.ك</th>
+</tr>
+</thead>
+<tbody id="p_items"></tbody>
+</table>
+<div class="totals-wrap">
+<table aria-label="ملخص الإجماليات" class="p-totals">
+<tr><td class="k">الاجمالي الفرعي</td><td class="c">:</td><td class="v" id="p_subtotal">—</td></tr>
+<tr><td class="k">نسبة الخصم</td><td class="c">:</td><td class="v" id="p_discount">—</td></tr>
+<tr><td class="k">المستحق بعد الخصم</td><td class="c">:</td><td class="v" id="p_after">—</td></tr>
+<tr><td class="k">قيمة الضريبة</td><td class="c">:</td><td class="v" id="p_tax">—</td></tr>
+<tr><td class="k">قيمة التوصيل</td><td class="c">:</td><td class="v" id="p_delivery">—</td></tr>
+<tr><td class="k">المستحق للدفع</td><td class="c">:</td><td class="v" id="p_final">—</td></tr>
+</table>
+<div class="stamp">ORN</div>
+</div>
+<footer class="inv-foot">
+<div class="foot-item">orn_q8</div>
+<div class="foot-item">94110414</div>
+<div class="foot-item">www.ornkw.com</div>
+<div class="foot-item">ornkuwait@gmail.com</div>
+</footer>
+<div aria-hidden="true" class="ribbon"></div>
+</div></div>
+</main>
+</div>
+<script>
+const PREC=9;
+const rc=n=>Number(parseFloat(n).toFixed(PREC));
+const s3=n=>Number(n).toFixed(3);
+
+function addRow(n="",p=0,q=1){
+let tr=document.createElement("tr");
+tr.innerHTML=`<td></td>
+<td><input value="${n}"></td>
+<td><input type=number value="${p}" oninput=calcItems()></td>
+<td class="after autoCalc">0</td>
+<td class="final autoCalc">0</td>
+<td><input type=number value="${q}" oninput=calcItems()></td>
+<td class="sum autoCalc">0</td>
+<td><button class="btn btn-sm btn-danger" onclick="this.closest('tr').remove();calcItems()">X</button></td>`;
+items.appendChild(tr);calcItems();
+}
+
+function calcItems(){
+let manual=parseFloat(manualDiscount.value)||0;
+let rows=[...items.rows];
+let baseTotal=0;
+
+rows.forEach((r,i)=>{
+r.cells[0].innerText=i+1;
+let price=parseFloat(r.cells[2].children[0].value)||0;
+let qty=parseFloat(r.cells[5].children[0].value)||0;
+baseTotal+=price*qty;
+});
+
+// الخصم التلقائي يظهر دائماً
+let target=parseFloat(targetTotal.value);
+if(target && target<baseTotal){
+let auto=((baseTotal-target)/baseTotal)*100;
+autoDiscount.value=auto.toFixed(10)
+}else autoDiscount.value="";
+
+let percent=autoDiscount.value?parseFloat(autoDiscount.value):manual;
+let mode=discountMode.value;
+
+let itemsTotalVal=0;
+
+rows.forEach(r=>{
+let price=parseFloat(r.cells[2].children[0].value)||0;
+let qty=parseFloat(r.cells[5].children[0].value)||0;
+let final=price;
+if(mode==="items") final=price*(1-percent/100);
+r.querySelector(".after").innerText=s3(final);
+r.querySelector(".final").innerText=s3(final);
+let sum=final*qty;
+r.querySelector(".sum").innerText=s3(sum);
+itemsTotalVal+=sum;
+});
+
+itemsTotal.innerText=s3(itemsTotalVal);
+}
+
+function calcFinal(){
+let manual=parseFloat(manualDiscount.value)||0;
+let auto=parseFloat(autoDiscount.value)||0;
+let percent=auto||manual;
+let mode=discountMode.value;
+
+let baseTotal=[...items.rows].reduce((t,r)=>{
+let p=parseFloat(r.cells[2].children[0].value)||0;
+let q=parseFloat(r.cells[5].children[0].value)||0;
+return t+p*q;
+},0);
+
+let itemsAfter=parseFloat(itemsTotal.innerText)||0;
+
+let subtotalVal,afterVal;
+
+if(mode==="invoice"){
+subtotalVal=baseTotal;
+afterVal=baseTotal*(1-percent/100);
+}else{
+subtotalVal=itemsAfter;
+afterVal=itemsAfter;
+percent=0;
+}
+
+const cur=" د.ك";
+
+subtotal.innerText=s3(subtotalVal)+cur;
+discountVal.innerText=percent.toFixed(3)+"%";
+after.innerText=s3(afterVal)+cur;
+taxVal.innerText=s3(+tax.value||0)+cur;
+deliveryVal.innerText=s3(+delivery.value||0)+cur;
+final.innerText=s3(afterVal+(+tax.value||0)+(+delivery.value||0))+cur;
+}
+
+function exportJSON(){
+let data={
+date: date.value,
+invoiceNo: invoiceNo.value,
+customer: customer.value,
+notes: notes.value,
+phone: phone.value,
+address: address.value,
+
+discountMode: discountMode.value,
+manualDiscount: manualDiscount.value,
+autoDiscount: autoDiscount.value,
+targetTotal: targetTotal.value,
+tax: tax.value,
+delivery: delivery.value,
+
+items:[]
+};
+
+[...items.rows].forEach(r=>data.items.push({
+name:r.cells[1].children[0].value,
+price:r.cells[2].children[0].value,
+qty:r.cells[5].children[0].value
+}));
+
+let a=document.createElement("a");
+a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)]));
+// تنظيف النص من الرموز غير المسموحة
+const safe = txt => (txt || "")
+.replace(/[\\\/:*?"<>|]/g,"")
+.trim();
+
+// تنسيق التاريخ
+let d = date.value || new Date().toISOString().split('T')[0];
+
+let fileName = `${safe(invoiceNo.value)} - ${safe(customer.value)} - ${d}.json`;
+
+a.download = fileName;
+a.click();
+}
+
+function importJSON(e){
+let fr=new FileReader();
+
+fr.onload=()=>{
+let d=JSON.parse(fr.result);
+
+// بيانات الفاتورة
+date.value=d.date||"";
+invoiceNo.value=d.invoiceNo||"";
+customer.value=d.customer||"";
+notes.value=d.notes||"";
+phone.value=d.phone||"";
+address.value=d.address||"";
+
+discountMode.value=d.discountMode||"none";
+manualDiscount.value=d.manualDiscount||0;
+autoDiscount.value=d.autoDiscount||"";
+targetTotal.value=d.targetTotal||"";
+tax.value=d.tax||0;
+delivery.value=d.delivery||0;
+
+// الأصناف
+items.innerHTML="";
+d.items.forEach(i=>addRow(i.name,i.price,i.qty));
+
+calcItems();
+calcFinal();
+};
+
+fr.readAsText(e.target.files[0]);
+}
+
+addRow();
+
+
+// =============================
+// تجهيز قالب الطباعة من شاشة الإدخال
+// =============================
+function escapeHtml(str){
+  return (str||'').toString()
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#039;');
+}
+
+function renderPrintView(){
+  // تحديث الحسابات أولاً
+  try{ calcItems(); }catch(e){}
+  try{ calcFinal(); }catch(e){}
+
+  const getVal = (id)=> document.getElementById(id)?.value ?? '';
+
+  // Escape
+  const esc = (s)=> (s??'').toString()
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#039;');
+
+  const host = document.getElementById('printPages');
+  const tpl = document.getElementById('printSingle');
+  if(!host || !tpl) return;
+
+  // hide template
+  try{ tpl.style.display='none'; }catch(e){}
+
+  // Meta
+  const pDate = (getVal('date')||'').replaceAll('-','/');
+  const pInvoice = getVal('invoiceNo');
+  const pCustomer = getVal('customer');
+  const pNotes = getVal('notes');
+  const rawPhone = (getVal('phone')||'').toString().trim();
+  const pPhone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : ('+'+rawPhone)) : '';
+  const pAddress = getVal('address');
+
+  // Items from UI
+  const uiRows = document.querySelectorAll('#items tr');
+  const itemsData=[];
+  uiRows.forEach(r=>{
+    const name = r.cells?.[1]?.querySelector('input')?.value ?? '';
+    const qty  = r.cells?.[5]?.querySelector('input')?.value ?? '';
+    const unit = r.querySelector('.final')?.textContent?.trim() ?? '';
+    const sum  = r.querySelector('.sum')?.textContent?.trim() ?? '';
+    const nz = (x)=> (x!=='' && x!=='0' && x!=='0.000');
+    if(!name && !nz(qty) && !nz(unit) && !nz(sum)) return;
+    itemsData.push({name, qty, unit, sum});
+  });
+
+  // Totals from UI
+  const subtotalTxt = document.getElementById('subtotal')?.textContent?.trim() || '—';
+  const discTxt = (document.getElementById('discountVal')?.textContent?.trim() || '');
+  const discNum = discTxt ? parseFloat(discTxt.replace('%','')) : NaN;
+  const discountTxt = isFinite(discNum) ? ('%'+discNum.toFixed(2)) : (discTxt||'—');
+  const afterTxt = document.getElementById('after')?.textContent?.trim() || '—';
+  const taxTxt = document.getElementById('taxVal')?.textContent?.trim() || '—';
+  const deliveryTxt = document.getElementById('deliveryVal')?.textContent?.trim() || '—';
+  const finalTxt = document.getElementById('final')?.textContent?.trim() || '—';
+
+  // Pagination
+  const PER_PAGE = 8;
+  const totalItems = itemsData.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PER_PAGE));
+
+  host.innerHTML='';
+
+  // We will reuse inner printable structure from template: take its .invoice-frame as HTML
+  const templateFrame = tpl.querySelector('.invoice-frame');
+  if(!templateFrame) return;
+
+  for(let p=0; p<totalPages; p++){
+    const isLast = (p===totalPages-1);
+
+    // create clean page container
+    const page = document.createElement('div');
+    page.className = 'print-sheet';
+
+    // clone invoice frame
+    const frame = templateFrame.cloneNode(true);
+
+    // fill meta
+    const q = (sel)=> frame.querySelector(sel);
+    if(q('#p_date')) q('#p_date').textContent = pDate || '—';
+    if(q('#p_invoiceNo')) q('#p_invoiceNo').textContent = pInvoice || '—';
+    if(q('#p_customer')) q('#p_customer').textContent = pCustomer || '—';
+    if(q('#p_notes')) q('#p_notes').textContent = pNotes || '—';
+    if(q('#p_phone')) q('#p_phone').textContent = pPhone || '—';
+    if(q('#p_address')) q('#p_address').textContent = pAddress || '—';
+
+    // fill items
+    const tbody = q('#p_items');
+    if(tbody) tbody.innerHTML='';
+    const start = p*PER_PAGE;
+    const end = Math.min(start+PER_PAGE, totalItems);
+    for(let i=start;i<end;i++){
+      const it = itemsData[i];
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="num">${i+1}</td>
+        <td class="name">${esc(it.name)}</td>
+        <td class="money">${it.unit}</td>
+        <td class="num">${it.qty}</td>
+        <td class="money">${it.sum}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    // totals only on last
+    const totalsWrap = frame.querySelector('.totals-wrap');
+    if(!isLast){
+      if(totalsWrap) totalsWrap.style.display='none';
+    }else{
+      if(totalsWrap) totalsWrap.style.display='';
+      if(q('#p_subtotal')) q('#p_subtotal').textContent = subtotalTxt;
+      if(q('#p_discount')) q('#p_discount').textContent = discountTxt;
+      if(q('#p_after')) q('#p_after').textContent = afterTxt;
+      if(q('#p_tax')) q('#p_tax').textContent = taxTxt;
+      if(q('#p_delivery')) q('#p_delivery').textContent = deliveryTxt;
+      if(q('#p_final')) q('#p_final').textContent = finalTxt;
+    }
+
+    // page number inside page (absolute)
+    const pn = document.createElement('div');
+    pn.className = 'page-no';
+    pn.textContent = `صفحة ${p+1} من ${totalPages}`;
+    page.appendChild(pn);
+
+    page.appendChild(frame);
+    host.appendChild(page);
+  }
+}
+
+window.addEventListener('beforeprint', renderPrintView);
+
+// لفّ window.print بحيث يجهز القالب قبل الطباعة
+(function(){
+  const _print = window.print;
+  window.print = function(){
+    renderPrintView();
+    return _print.call(window);
+  };
+})();
+
+  
+
+// =============================
+// دفتر الفواتير (Google Sheet عبر Apps Script Web App)
+// =============================
+const PROXY_URL = "https://calm-river-a5dcorninvoices.m-elsayed1510-445.workers.dev";
+let API_PASSWORD = "";
+let IS_AUTH = false;
+
+// unified API fetch (adds Authorization automatically)
+async function apiFetch(path, options = {}){
+  options.headers = {
+    ...(options.headers || {}),
+    "Authorization": "Bearer " + API_PASSWORD
+  };
+  return fetch(PROXY_URL + path, options);
+}
+
+function buildInvoiceJSON(){
+  let data={
+    date: date.value,
+    invoiceNo: invoiceNo.value,
+    customer: customer.value,
+    notes: notes.value,
+    phone: phone.value,
+    address: address.value,
+    discountMode: discountMode.value,
+    manualDiscount: manualDiscount.value,
+    autoDiscount: autoDiscount.value,
+    targetTotal: targetTotal.value,
+    tax: tax.value,
+    delivery: delivery.value,
+    items: []
+  };
+  [...items.rows].forEach(r=>data.items.push({
+    name:r.cells[1].children[0].value,
+    price:r.cells[2].children[0].value,
+    qty:r.cells[5].children[0].value
+  }));
+  return data;
+}
+
+function setLedgerStatus(msg, color='#111'){
+  const st=document.getElementById('ledgerStatus');
+  if(st){ st.textContent = msg || ''; st.style.color=color; }
+}
+
+async function saveToLedger(){
+
+ try{ calcItems(); }catch(e){}
+ try{ calcFinal(); }catch(e){}
+ const payload = buildInvoiceJSON();
+ if(!navigator.onLine){
+   queueLedger(payload);
+   setLedgerStatus('تم الحفظ محليًا (أوفلاين) وسيتم الإرسال عند توفر الإنترنت', '#b45309');
+   return;
+ }
+ try{
+   setLedgerStatus('جارٍ الحفظ...', '#0f172a');
+   const res = await apiFetch(`/api/save`, {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify(payload)
+   });
+   const out = await res.json().catch(()=>null);
+   if(res.ok && (out?.ok ?? true)){
+     setLedgerStatus('تم إرسال الفاتورة للدفتر ✅', '#15803d');
+     setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+ refreshInvoicesList();
+   }else{
+     queueLedger(payload);
+     setLedgerStatus('تعذر الإرسال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
+   }
+ }catch(err){
+   queueLedger(payload);
+   setLedgerStatus('خطأ اتصال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
+ }
+
+}
+
+function queueLedger(inv){
+  const key='ledger_queue_v1';
+  const arr = JSON.parse(localStorage.getItem(key) || '[]');
+  arr.push({ts: Date.now(), invoice: inv});
+  localStorage.setItem(key, JSON.stringify(arr));
+}
+
+async function flushLedgerQueue(){
+
+ if(!navigator.onLine) return;
+ const key='ledger_queue_v1';
+ const arr = JSON.parse(localStorage.getItem(key) || '[]');
+ if(!arr.length) return;
+ const remaining=[];
+ for(const item of arr){
+   try{
+     const res = await apiFetch(`/api/save`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify(item.invoice)
+     });
+     const out = await res.json().catch(()=>null);
+     if(!(res.ok && (out?.ok ?? true))) remaining.push(item);
+   }catch(e){
+     remaining.push(item);
+   }
+ }
+ localStorage.setItem(key, JSON.stringify(remaining));
+
+}
+window.addEventListener('online', flushLedgerQueue);
+
+// jsonp() removed — using Cloudflare Worker proxy
+async function refreshInvoicesList(){
+  if(!navigator.onLine){
+    setLedgerStatus('لا يوجد إنترنت لتحديث قائمة الدفتر', '#b45309');
+    return;
+  }
+  try{
+    setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+    const res = await apiFetch(`/api/list`);
+    const data = await res.json().catch(()=>null);
+    if(!data || !data.ok){
+      const err = (data && data.error) ? data.error : '';
+      const msg = (err === 'Unauthorized' || err === 'unauthorized')
+        ? 'غير مصرح. تأكد من كلمة المرور'
+        : ('فشل تحميل القائمة' + (err ? (': ' + err) : ''));
+      setLedgerStatus(msg, '#b91c1c');
+      return;
+    }
+
+    const sel = document.getElementById('savedInvoices');
+    if(!sel) return;
+    sel.innerHTML = '';
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = 'اختر فاتورة محفوظة...';
+    sel.appendChild(ph);
+
+    (data.invoices || []).forEach(inv => {
+      const opt = document.createElement('option');
+      opt.value = inv.row;
+      opt.textContent = `${inv.invoiceNo || ''} - ${inv.customer || ''} - ${inv.date || ''}`;
+      sel.appendChild(opt);
+    });
+
+    setLedgerStatus('تم تحديث القائمة ✅', '#15803d');
+  }catch(e){
+    setLedgerStatus('تعذر تحديث القائمة', '#b91c1c');
+  }
+}
+
+
+async function loadSelectedInvoice(){
+  const sel=document.getElementById('savedInvoices');
+  const row = sel ? sel.value : '';
+  if(!row){ setLedgerStatus('اختر فاتورة أولاً', '#b45309'); return; }
+  await loadInvoiceByRow(row);
+}
+
+async function deleteSelectedInvoice(){
+  const sel = document.getElementById('savedInvoices');
+  const row = sel ? sel.value : '';
+
+  if(!row){
+    setLedgerStatus('اختر فاتورة أولاً', '#b45309');
+    return;
+  }
+
+  const label = sel.options[sel.selectedIndex]?.textContent || '';
+  const ok = confirm(`هل أنت متأكد من حذف الفاتورة؟\n${label}\n\nلن يمكن استرجاعها.`);
+  if(!ok) return;
+
+  if(!navigator.onLine){
+    setLedgerStatus('لا يوجد إنترنت لتنفيذ الحذف', '#b45309');
+    return;
+  }
+
+  try{
+    setLedgerStatus('جارٍ الحذف...', '#0f172a');
+
+    // ⚠️ يلزم وجود endpoint في السيرفر: DELETE /api/delete?row=...
+    const res = await apiFetch(`/api/delete?row=${encodeURIComponent(row)}`, {
+      method: 'DELETE'
+    });
+
+    const data = await res.json().catch(()=>null);
+
+    if(!res.ok || !data || !data.ok){
+      const err = data?.error || 'تعذر الحذف';
+      setLedgerStatus('فشل الحذف: ' + err, '#b91c1c');
+      return;
+    }
+
+    setLedgerStatus('تم حذف الفاتورة ✅', '#15803d');
+
+    // تحديث القائمة ومسح الاختيار
+    await refreshInvoicesList();
+    if(sel) sel.value = '';
+
+  }catch(e){
+    setLedgerStatus('خطأ أثناء الحذف', '#b91c1c');
+  }
+}
+
+async function searchInvoice(){
+
+ const q=(document.getElementById('searchInvoiceNo')?.value || '').trim();
+ if(!q){ setLedgerStatus('اكتب رقم الفاتورة للبحث', '#b45309'); return; }
+ if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للبحث', '#b45309'); return; }
+ try{
+   const res = await apiFetch(`/api/find?invoiceNo=${encodeURIComponent(q)}`);
+   const data = await res.json();
+ if((data?.error==='Unauthorized' || data?.error==='unauthorized') && !refreshInvoicesList._retryOnce){
+  refreshInvoicesList._retryOnce = true;
+  await new Promise(r=>setTimeout(r, 400));
+  return setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+ refreshInvoicesList();
+ }
+ refreshInvoicesList._retryOnce = false;
+   if(!data || !data.ok){ setLedgerStatus('غير موجود', '#b91c1c'); return; }
+   importFromObject(data.invoice);
+   setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
+ }catch(e){
+   setLedgerStatus('فشل البحث', '#b91c1c');
+ }
+
+}
+
+async function loadInvoiceByRow(row){
+
+ if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للتحميل', '#b45309'); return; }
+ try{
+   const res = await apiFetch(`/api/get?row=${encodeURIComponent(row)}`);
+   const data = await res.json();
+ if((data?.error==='Unauthorized' || data?.error==='unauthorized') && !refreshInvoicesList._retryOnce){
+  refreshInvoicesList._retryOnce = true;
+  await new Promise(r=>setTimeout(r, 400));
+  return setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+ refreshInvoicesList();
+ }
+ refreshInvoicesList._retryOnce = false;
+   if(!data || !data.ok){
+     setLedgerStatus('فشل التحميل: ' + (data?.error || ''), '#b91c1c');
+     return;
+   }
+   importFromObject(data.invoice);
+   setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
+ }catch(e){
+   setLedgerStatus('فشل التحميل', '#b91c1c');
+ }
+
+}
+
+function importFromObject(d){
+  date.value = d.date || '';
+  invoiceNo.value = d.invoiceNo || '';
+  customer.value = d.customer || '';
+  notes.value = d.notes || '';
+  phone.value = d.phone || '';
+  address.value = d.address || '';
+  discountMode.value = d.discountMode || 'none';
+  manualDiscount.value = d.manualDiscount || 0;
+  autoDiscount.value = d.autoDiscount || '';
+  targetTotal.value = d.targetTotal || '';
+  tax.value = d.tax || 0;
+  delivery.value = d.delivery || 0;
+  items.innerHTML='';
+  (d.items || []).forEach(i=>addRow(i.name, i.price, i.qty));
+  calcItems();
+  calcFinal();
+  renderPrintView();
+}
+
+async function setNextInvoiceNo(){
+  if(!navigator.onLine) return;
+  try{
+    const res = await apiFetch(`/api/next`);
+    const data = await res.json().catch(()=>null);
+    if(data && data.ok && data.nextInvoiceNo){
+      invoiceNo.value = data.nextInvoiceNo;
+    }
+  }catch(e){}
+}
+
+
+function newInvoice(){
+  date.value='';
+  customer.value='';
+  notes.value='';
+  phone.value='';
+  address.value='';
+  discountMode.value='none';
+  manualDiscount.value=0;
+  autoDiscount.value='';
+  targetTotal.value='';
+  tax.value=0;
+  delivery.value=0;
+  items.innerHTML='';
+  addRow();
+  calcItems();
+  calcFinal();
+  setLedgerStatus('فاتورة جديدة', '#0f172a');
+  setNextInvoiceNo();
+}
+</script>
+
+<script>
+(function(){
+  const form = document.getElementById('loginForm');
+  const pass = document.getElementById('loginPass');
+  const toggle = document.getElementById('togglePass');
+  if(form){
+    form.addEventListener('submit', function(e){ e.preventDefault(); if(typeof login==='function') login(); });
+  }
+  if(pass){
+    pass.addEventListener('keydown', function(e){
+      if(e.key === 'Enter'){ e.preventDefault(); if(typeof login==='function') login(); }
+    });
+    setTimeout(()=>pass.focus(), 50);
+  }
+  if(toggle && pass){
+    toggle.addEventListener('click', function(){
+      pass.type = (pass.type === 'password') ? 'text' : 'password';
+      pass.focus();
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
