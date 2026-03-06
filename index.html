@@ -688,86 +688,15 @@ input, select, textarea, button, table, th, td, label, div, span, h1, h2, h3, h4
 </div>
 
 <script>
-async function login(){
-
-  const p = document.getElementById("loginPass").value.trim();
-
-  if(!p){
- document.getElementById("loginMsg").innerText="اكتب كلمة السر";
- return;
- }
-  // UI loading
-  const btn = document.getElementById('btnLogin');
-  const sp = document.getElementById('loginSpinner');
-  const bt = document.getElementById('loginBtnText');
-  if(btn) btn.disabled = true;
-  if(sp) sp.classList.remove('d-none');
-  if(bt) bt.textContent = 'جارٍ التحقق...';
-  document.getElementById('loginMsg').innerText = '';
-  document.getElementById('loginMsg').style.color = '#0f172a';
-
- API_PASSWORD = p;
-
-  try{
-
-    const res = await fetch(
-      PROXY_URL + "/api/list",
-      {
-        headers:{
-          "Authorization":"Bearer " + API_PASSWORD
-        }
-      }
-    );
-
-    const data = await res.json().catch(()=>null);
-
-    if(!res.ok || data?.error){
-      document.getElementById("loginMsg").innerText="كلمة السر غير صحيحة";
-  // UI reset
-  const btn = document.getElementById('btnLogin');
-  const sp = document.getElementById('loginSpinner');
-  const bt = document.getElementById('loginBtnText');
-  if(btn) btn.disabled = false;
-  if(sp) sp.classList.add('d-none');
-  if(bt) bt.textContent = 'دخول';
-
-API_PASSWORD="";
-return;
-    }
-
-    document.getElementById("loginScreen").style.display="none";
-IS_AUTH = true;
-  // UI reset
-  const btn = document.getElementById('btnLogin');
-  const sp = document.getElementById('loginSpinner');
-  const bt = document.getElementById('loginBtnText');
-  if(btn) btn.disabled = false;
-  if(sp) sp.classList.add('d-none');
-  if(bt) bt.textContent = 'دخول';
-
-
-    if(typeof refreshInvoicesList === "function"){
-      setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
- refreshInvoicesList();
-    }
-
-    if(typeof setNextInvoiceNo === "function"){
-      setNextInvoiceNo();
-    }
-
-  }catch(e){
-    document.getElementById("loginMsg").innerText="خطأ في الاتصال بالسيرفر";
-  // UI reset
-  const btn = document.getElementById('btnLogin');
-  const sp = document.getElementById('loginSpinner');
-  const bt = document.getElementById('loginBtnText');
-  if(btn) btn.disabled = false;
-  if(sp) sp.classList.add('d-none');
-  if(bt) bt.textContent = 'دخول';
-
-  }
-
-}
+/*
+  =========================
+  Refactor/Security Patch (Legacy CF Auth) (2026-03)
+  - الحفاظ على بنية Cloudflare Worker الحالية (Authorization: Bearer PASSWORD).
+  - إزالة المتغيرات العالمية لكلمة السر (لا متغير كلمة السر global).
+  - تقليل زمن بقاء كلمة السر في الذاكرة (in-memory + auto-expire + wipe).
+  - حماية XSS + تحقق JSON + تحسينات أداء + تنظيم Modules.
+  =========================
+*/
 </script>
 <div id="ui"><div class="container box">
 <h4 class="mb-3">فاتورة مبيعات</h4>
@@ -936,651 +865,1136 @@ IS_AUTH = true;
 </main>
 </div>
 <script>
-const PREC=9;
-const rc=n=>Number(parseFloat(n).toFixed(PREC));
-const s3=n=>Number(n).toFixed(3);
+'use strict';
 
-function addRow(n="",p=0,q=1){
-let tr=document.createElement("tr");
-tr.innerHTML=`<td></td>
-<td><input value="${n}"></td>
-<td><input type=number value="${p}" oninput=calcItems()></td>
-<td class="after autoCalc">0</td>
-<td class="final autoCalc">0</td>
-<td><input type=number value="${q}" oninput=calcItems()></td>
-<td class="sum autoCalc">0</td>
-<td><button class="btn btn-sm btn-danger" onclick="this.closest('tr').remove();calcItems()">X</button></td>`;
-items.appendChild(tr);calcItems();
-}
+/*
+  =============================================================
+  ملاحظة مهمة (بدون تغيير Cloudflare Worker):
+  - السيرفر الحالي يعتمد Authorization: Bearer <PASSWORD> كما كان في الكود القديم.
+  - لذلك لا يمكن تطبيق Token حقيقي بدون تعديل السيرفر.
+  - تم تنفيذ أفضل بديل آمن:
+    1) عدم تخزين كلمة السر في متغير عالمي.
+    2) حفظها داخل Module خاص (closure) + مسح سريع + انتهاء صلاحية تلقائي.
+    3) تقوية XSS لمنع سرقة كلمة السر من DOM/الذاكرة.
+  =============================================================
+*/
 
-function calcItems(){
-let manual=parseFloat(manualDiscount.value)||0;
-let rows=[...items.rows];
-let baseTotal=0;
+const App = {
+  config: {
+    PROXY_URL: "https://calm-river-a5dcorninvoices.m-elsayed1510-445.workers.dev",
+    endpoints: {
+      list: '/api/list',
+      save: '/api/save',
+      get: '/api/get',
+      next: '/api/next',
+      find: '/api/find',
+      del: '/api/delete'
+    },
+    debounceMs: 150,
+    itemsPerPage: 8,
+    currencySuffix: ' د.ك',
+    queueKey: 'ledger_queue_v2',
+    legacyQueueKey: 'ledger_queue_v1',
+    queueMax: 200,
+    // مدة صلاحية كلمة السر في الذاكرة بدون استخدام (دقائق)
+    authIdleMinutes: 30,
+    autoFlushMs: 30000
+  },
 
-rows.forEach((r,i)=>{
-r.cells[0].innerText=i+1;
-let price=parseFloat(r.cells[2].children[0].value)||0;
-let qty=parseFloat(r.cells[5].children[0].value)||0;
-baseTotal+=price*qty;
-});
+  state: {
+    isAuth: false,
+    flushTimer: null
+  },
 
-// الخصم التلقائي يظهر دائماً
-let target=parseFloat(targetTotal.value);
-if(target && target<baseTotal){
-let auto=((baseTotal-target)/baseTotal)*100;
-autoDiscount.value=auto.toFixed(10)
-}else autoDiscount.value="";
+  dom: {},
 
-let percent=autoDiscount.value?parseFloat(autoDiscount.value):manual;
-let mode=discountMode.value;
+  utils: {
+    sanitizeInput(value) {
+      const s = (value ?? '').toString();
+      let out = s.replace(/[\u0000-\u001F\u007F]/g, '').trim();
+      // منع حقن HTML (بدون تغيير النصوص العربية)
+      out = out.replace(/[<>]/g, '');
+      // حد أقصى للحقول النصية
+      if (out.length > 2000) out = out.slice(0, 2000);
+      return out;
+    },
 
-let itemsTotalVal=0;
+    parseNumber(value, fallback = 0) {
+      const n = Number.parseFloat(String(value ?? '').replace(/,/g, ''));
+      if (!Number.isFinite(n)) return fallback;
+      return Math.max(0, n);
+    },
 
-rows.forEach(r=>{
-let price=parseFloat(r.cells[2].children[0].value)||0;
-let qty=parseFloat(r.cells[5].children[0].value)||0;
-let final=price;
-if(mode==="items") final=price*(1-percent/100);
-r.querySelector(".after").innerText=s3(final);
-r.querySelector(".final").innerText=s3(final);
-let sum=final*qty;
-r.querySelector(".sum").innerText=s3(sum);
-itemsTotalVal+=sum;
-});
+    s3(n) {
+      const x = Number(n);
+      if (!Number.isFinite(x)) return '0.000';
+      return x.toFixed(3);
+    },
 
-itemsTotal.innerText=s3(itemsTotalVal);
-}
+    formatCurrency(n) {
+      return `${App.utils.s3(n)}${App.config.currencySuffix}`;
+    },
 
-function calcFinal(){
-let manual=parseFloat(manualDiscount.value)||0;
-let auto=parseFloat(autoDiscount.value)||0;
-let percent=auto||manual;
-let mode=discountMode.value;
+    debounce(fn, wait) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), wait);
+      };
+    },
 
-let baseTotal=[...items.rows].reduce((t,r)=>{
-let p=parseFloat(r.cells[2].children[0].value)||0;
-let q=parseFloat(r.cells[5].children[0].value)||0;
-return t+p*q;
-},0);
+    sanitizeFilenamePart(txt) {
+      const s = (txt ?? '').toString();
+      let out = s.replace(/[\\/:*?"<>|\n\r\t]/g, '').trim();
+      out = out.replace(/\s+/g, ' ');
+      if (out.length > 80) out = out.slice(0, 80);
+      return out;
+    },
 
-let itemsAfter=parseFloat(itemsTotal.innerText)||0;
+    fnv1a(str) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+      }
+      return ('0000000' + h.toString(16)).slice(-8);
+    },
 
-let subtotalVal,afterVal;
+    validateInvoiceSchema(obj) {
+      if (!obj || typeof obj !== 'object') return { ok: false, error: 'ملف غير صالح' };
+      const req = ['date','invoiceNo','customer','phone','address','notes','discountMode','manualDiscount','autoDiscount','targetTotal','tax','delivery','items'];
+      for (const k of req) {
+        if (!(k in obj)) return { ok: false, error: `نقص الحقل: ${k}` };
+      }
+      if (!Array.isArray(obj.items)) return { ok: false, error: 'items يجب أن تكون قائمة' };
+      for (const it of obj.items) {
+        if (!it || typeof it !== 'object') return { ok: false, error: 'عنصر صنف غير صالح' };
+        if (!('name' in it) || !('price' in it) || !('qty' in it)) return { ok: false, error: 'الصنف يجب أن يحتوي name/price/qty' };
+        if (typeof it.name !== 'string') return { ok: false, error: 'اسم الصنف يجب أن يكون نص' };
+        const p = App.utils.parseNumber(it.price, NaN);
+        const q = App.utils.parseNumber(it.qty, NaN);
+        if (!Number.isFinite(p) || !Number.isFinite(q)) return { ok: false, error: 'سعر/عدد غير صالح' };
+      }
+      const numericFields = ['manualDiscount','autoDiscount','targetTotal','tax','delivery'];
+      for (const k of numericFields) {
+        const v = obj[k];
+        if (v === '' || v === null || v === undefined) continue;
+        const n = Number.parseFloat(String(v).replace(/,/g, ''));
+        if (!Number.isFinite(n)) return { ok: false, error: `قيمة غير رقمية: ${k}` };
+        if (n < 0) return { ok: false, error: `قيمة سالبة غير مسموحة: ${k}` };
+      }
+      if (!['none','items','invoice'].includes(String(obj.discountMode))) {
+        return { ok: false, error: 'discountMode غير صالح' };
+      }
+      return { ok: true };
+    }
+  },
 
-if(mode==="invoice"){
-subtotalVal=baseTotal;
-afterVal=baseTotal*(1-percent/100);
-}else{
-subtotalVal=itemsAfter;
-afterVal=itemsAfter;
-percent=0;
-}
+  ui: {
+    resetLoginUI() {
+      const { btnLogin, loginSpinner, loginBtnText, loginMsg } = App.dom;
+      if (btnLogin) btnLogin.disabled = false;
+      if (loginSpinner) loginSpinner.classList.add('d-none');
+      if (loginBtnText) loginBtnText.textContent = 'دخول';
+      if (loginMsg) {
+        loginMsg.textContent = '';
+        loginMsg.style.color = '#0f172a';
+      }
+    },
 
-const cur=" د.ك";
+    setLoginLoading(on) {
+      const { btnLogin, loginSpinner, loginBtnText, loginMsg } = App.dom;
+      if (btnLogin) btnLogin.disabled = !!on;
+      if (loginSpinner) loginSpinner.classList.toggle('d-none', !on);
+      if (loginBtnText) loginBtnText.textContent = on ? 'جارٍ التحقق...' : 'دخول';
+      if (loginMsg) {
+        loginMsg.textContent = '';
+        loginMsg.style.color = '#0f172a';
+      }
+    },
 
-subtotal.innerText=s3(subtotalVal)+cur;
-discountVal.innerText=percent.toFixed(3)+"%";
-after.innerText=s3(afterVal)+cur;
-taxVal.innerText=s3(+tax.value||0)+cur;
-deliveryVal.innerText=s3(+delivery.value||0)+cur;
-final.innerText=s3(afterVal+(+tax.value||0)+(+delivery.value||0))+cur;
-}
+    showLoginError(msg) {
+      const el = App.dom.loginMsg;
+      if (el) {
+        el.textContent = msg;
+        el.style.color = 'red';
+      }
+    },
 
-function exportJSON(){
-let data={
-date: date.value,
-invoiceNo: invoiceNo.value,
-customer: customer.value,
-notes: notes.value,
-phone: phone.value,
-address: address.value,
+    setLedgerStatus(msg, color = '#111') {
+      const st = App.dom.ledgerStatus;
+      if (st) {
+        st.textContent = msg ?? '';
+        st.style.color = color;
+      }
+    }
+  },
 
-discountMode: discountMode.value,
-manualDiscount: manualDiscount.value,
-autoDiscount: autoDiscount.value,
-targetTotal: targetTotal.value,
-tax: tax.value,
-delivery: delivery.value,
+  // =============================
+  // Auth module (Legacy)
+  // =============================
+  auth: (() => {
+    let _pass = '';
+    let _lastUse = 0;
 
-items:[]
-};
+    function _touch() { _lastUse = Date.now(); }
 
-[...items.rows].forEach(r=>data.items.push({
-name:r.cells[1].children[0].value,
-price:r.cells[2].children[0].value,
-qty:r.cells[5].children[0].value
-}));
+    function setPassword(p) {
+      _pass = (p ?? '').toString();
+      _touch();
+    }
 
-let a=document.createElement("a");
-a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)]));
-// تنظيف النص من الرموز غير المسموحة
-const safe = txt => (txt || "")
-.replace(/[\\\/:*?"<>|]/g,"")
-.trim();
+    function wipe() {
+      // محاولة مسح قيمة كلمة السر
+      _pass = '';
+      _lastUse = 0;
+      App.state.isAuth = false;
+    }
 
-// تنسيق التاريخ
-let d = date.value || new Date().toISOString().split('T')[0];
+    function isExpired() {
+      if (!_pass) return true;
+      const idleMs = App.config.authIdleMinutes * 60 * 1000;
+      return (Date.now() - _lastUse) > idleMs;
+    }
 
-let fileName = `${safe(invoiceNo.value)} - ${safe(customer.value)} - ${d}.json`;
+    function getAuthHeader() {
+      if (!_pass || isExpired()) {
+        wipe();
+        throw new Error('Unauthorized');
+      }
+      _touch();
+      // كما هو متوقع من Cloudflare Worker الحالي
+      return { 'Authorization': 'Bearer ' + _pass };
+    }
 
-a.download = fileName;
-a.click();
-}
+    async function login() {
+      const passEl = App.dom.loginPass;
+      const raw = (passEl?.value ?? '').trim();
+      if (!raw) {
+        App.ui.showLoginError('اكتب كلمة السر');
+        return;
+      }
 
-function importJSON(e){
-let fr=new FileReader();
+      App.ui.setLoginLoading(true);
 
-fr.onload=()=>{
-let d=JSON.parse(fr.result);
+      try {
+        // لا نخزن كلمة السر في global - فقط داخل هذا module
+        setPassword(raw);
+        // امسح الحقل فورًا لتقليل التعرض
+        if (passEl) passEl.value = '';
 
-// بيانات الفاتورة
-date.value=d.date||"";
-invoiceNo.value=d.invoiceNo||"";
-customer.value=d.customer||"";
-notes.value=d.notes||"";
-phone.value=d.phone||"";
-address.value=d.address||"";
+        // تحقق من كلمة السر عبر endpoint الحالي كما كان
+        const res = await fetch(App.config.PROXY_URL + App.config.endpoints.list, {
+          headers: { ...getAuthHeader() }
+        });
+        const data = await res.json().catch(() => null);
 
-discountMode.value=d.discountMode||"none";
-manualDiscount.value=d.manualDiscount||0;
-autoDiscount.value=d.autoDiscount||"";
-targetTotal.value=d.targetTotal||"";
-tax.value=d.tax||0;
-delivery.value=d.delivery||0;
+        if (!res.ok || data?.error) {
+          wipe();
+          App.ui.showLoginError('كلمة السر غير صحيحة');
+          App.ui.resetLoginUI();
+          return;
+        }
 
-// الأصناف
-items.innerHTML="";
-d.items.forEach(i=>addRow(i.name,i.price,i.qty));
+        App.state.isAuth = true;
+        if (App.dom.loginScreen) App.dom.loginScreen.style.display = 'none';
+        App.ui.resetLoginUI();
 
-calcItems();
-calcFinal();
-};
+        // تحميل القائمة + رقم الفاتورة
+        App.ui.setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+        await App.ledger.refreshInvoicesList();
+        await App.ledger.setNextInvoiceNo();
 
-fr.readAsText(e.target.files[0]);
-}
+      } catch (e) {
+        wipe();
+        App.ui.showLoginError('خطأ في الاتصال بالسيرفر');
+        App.ui.resetLoginUI();
+      }
+    }
 
-addRow();
+    return { login, getAuthHeader, wipe, isExpired };
+  })(),
 
+  api: {
+    async fetch(path, options = {}) {
+      const headers = { ...(options.headers || {}), ...App.auth.getAuthHeader() };
+      return fetch(App.config.PROXY_URL + path, { ...options, headers });
+    }
+  },
 
-// =============================
-// تجهيز قالب الطباعة من شاشة الإدخال
-// =============================
-function escapeHtml(str){
-  return (str||'').toString()
-    .replaceAll('&','&amp;')
-    .replaceAll('<','&lt;')
-    .replaceAll('>','&gt;')
-    .replaceAll('"','&quot;')
-    .replaceAll("'",'&#039;');
-}
+  invoice: {
+    scheduleCalcItems: null,
 
-function renderPrintView(){
-  // تحديث الحسابات أولاً
-  try{ calcItems(); }catch(e){}
-  try{ calcFinal(); }catch(e){}
+    init() {
+      App.invoice.scheduleCalcItems = App.utils.debounce(App.invoice.calcItemsNow, App.config.debounceMs);
 
-  const getVal = (id)=> document.getElementById(id)?.value ?? '';
+      // حسابات الضرائب/التوصيل ممكن تتغير بدون oninput في HTML
+      App.dom.tax?.addEventListener('input', () => App.invoice.calcFinal());
+      App.dom.delivery?.addEventListener('input', () => App.invoice.calcFinal());
+    },
 
-  // Escape
-  const esc = (s)=> (s??'').toString()
-    .replaceAll('&','&amp;')
-    .replaceAll('<','&lt;')
-    .replaceAll('>','&gt;')
-    .replaceAll('"','&quot;')
-    .replaceAll("'",'&#039;');
+    addRow(name = '', price = 0, qty = 1, opts = {}) {
+      const tbody = App.dom.items;
+      if (!tbody) return;
 
-  const host = document.getElementById('printPages');
-  const tpl = document.getElementById('printSingle');
-  if(!host || !tpl) return;
+      const n = App.utils.sanitizeInput(name);
+      const p = App.utils.parseNumber(price, 0);
+      const q = App.utils.parseNumber(qty, 1);
 
-  // hide template
-  try{ tpl.style.display='none'; }catch(e){}
-
-  // Meta
-  const pDate = (getVal('date')||'').replaceAll('-','/');
-  const pInvoice = getVal('invoiceNo');
-  const pCustomer = getVal('customer');
-  const pNotes = getVal('notes');
-  const rawPhone = (getVal('phone')||'').toString().trim();
-  const pPhone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : ('+'+rawPhone)) : '';
-  const pAddress = getVal('address');
-
-  // Items from UI
-  const uiRows = document.querySelectorAll('#items tr');
-  const itemsData=[];
-  uiRows.forEach(r=>{
-    const name = r.cells?.[1]?.querySelector('input')?.value ?? '';
-    const qty  = r.cells?.[5]?.querySelector('input')?.value ?? '';
-    const unit = r.querySelector('.final')?.textContent?.trim() ?? '';
-    const sum  = r.querySelector('.sum')?.textContent?.trim() ?? '';
-    const nz = (x)=> (x!=='' && x!=='0' && x!=='0.000');
-    if(!name && !nz(qty) && !nz(unit) && !nz(sum)) return;
-    itemsData.push({name, qty, unit, sum});
-  });
-
-  // Totals from UI
-  const subtotalTxt = document.getElementById('subtotal')?.textContent?.trim() || '—';
-  const discTxt = (document.getElementById('discountVal')?.textContent?.trim() || '');
-  const discNum = discTxt ? parseFloat(discTxt.replace('%','')) : NaN;
-  const discountTxt = isFinite(discNum) ? ('%'+discNum.toFixed(2)) : (discTxt||'—');
-  const afterTxt = document.getElementById('after')?.textContent?.trim() || '—';
-  const taxTxt = document.getElementById('taxVal')?.textContent?.trim() || '—';
-  const deliveryTxt = document.getElementById('deliveryVal')?.textContent?.trim() || '—';
-  const finalTxt = document.getElementById('final')?.textContent?.trim() || '—';
-
-  // Pagination
-  const PER_PAGE = 8;
-  const totalItems = itemsData.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / PER_PAGE));
-
-  host.innerHTML='';
-
-  // We will reuse inner printable structure from template: take its .invoice-frame as HTML
-  const templateFrame = tpl.querySelector('.invoice-frame');
-  if(!templateFrame) return;
-
-  for(let p=0; p<totalPages; p++){
-    const isLast = (p===totalPages-1);
-
-    // create clean page container
-    const page = document.createElement('div');
-    page.className = 'print-sheet';
-
-    // clone invoice frame
-    const frame = templateFrame.cloneNode(true);
-
-    // fill meta
-    const q = (sel)=> frame.querySelector(sel);
-    if(q('#p_date')) q('#p_date').textContent = pDate || '—';
-    if(q('#p_invoiceNo')) q('#p_invoiceNo').textContent = pInvoice || '—';
-    if(q('#p_customer')) q('#p_customer').textContent = pCustomer || '—';
-    if(q('#p_notes')) q('#p_notes').textContent = pNotes || '—';
-    if(q('#p_phone')) q('#p_phone').textContent = pPhone || '—';
-    if(q('#p_address')) q('#p_address').textContent = pAddress || '—';
-
-    // fill items
-    const tbody = q('#p_items');
-    if(tbody) tbody.innerHTML='';
-    const start = p*PER_PAGE;
-    const end = Math.min(start+PER_PAGE, totalItems);
-    for(let i=start;i<end;i++){
-      const it = itemsData[i];
       const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td class="num">${i+1}</td>
-        <td class="name">${esc(it.name)}</td>
-        <td class="money">${it.unit}</td>
-        <td class="num">${it.qty}</td>
-        <td class="money">${it.sum}</td>
-      `;
+
+      const tdIndex = document.createElement('td');
+      tdIndex.textContent = '';
+      tr.appendChild(tdIndex);
+
+      const tdName = document.createElement('td');
+      const inName = document.createElement('input');
+      inName.value = n;
+      inName.addEventListener('input', () => App.invoice.calcItems());
+      tdName.appendChild(inName);
+      tr.appendChild(tdName);
+
+      const tdBase = document.createElement('td');
+      const inPrice = document.createElement('input');
+      inPrice.type = 'number';
+      inPrice.value = String(p);
+      inPrice.addEventListener('input', () => App.invoice.calcItems());
+      tdBase.appendChild(inPrice);
+      tr.appendChild(tdBase);
+
+      const tdAfter = document.createElement('td');
+      tdAfter.className = 'after autoCalc';
+      tdAfter.textContent = '0';
+      tr.appendChild(tdAfter);
+
+      const tdFinal = document.createElement('td');
+      tdFinal.className = 'final autoCalc';
+      tdFinal.textContent = '0';
+      tr.appendChild(tdFinal);
+
+      const tdQty = document.createElement('td');
+      const inQty = document.createElement('input');
+      inQty.type = 'number';
+      inQty.value = String(q);
+      inQty.addEventListener('input', () => App.invoice.calcItems());
+      tdQty.appendChild(inQty);
+      tr.appendChild(tdQty);
+
+      const tdSum = document.createElement('td');
+      tdSum.className = 'sum autoCalc';
+      tdSum.textContent = '0';
+      tr.appendChild(tdSum);
+
+      const tdDel = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-sm btn-danger';
+      btn.type = 'button';
+      btn.textContent = 'X';
+      btn.addEventListener('click', () => {
+        tr.remove();
+        App.invoice.calcItems();
+      });
+      tdDel.appendChild(btn);
+      tr.appendChild(tdDel);
+
       tbody.appendChild(tr);
+      if (!opts.skipCalc) App.invoice.calcItems();
+    },
+
+    calcItems() {
+      App.invoice.scheduleCalcItems();
+    },
+
+    calcItemsNow() {
+      const D = App.dom;
+      const rows = Array.from(D.items?.rows || []);
+
+      const manual = App.utils.parseNumber(D.manualDiscount?.value, 0);
+      const mode = D.discountMode?.value || 'none';
+
+      // base total
+      let baseTotal = 0;
+      rows.forEach((r, idx) => {
+        if (r.cells?.[0]) r.cells[0].textContent = String(idx + 1);
+
+        const priceEl = r.cells?.[2]?.querySelector('input');
+        const qtyEl = r.cells?.[5]?.querySelector('input');
+
+        const price = App.utils.parseNumber(priceEl?.value, 0);
+        const qty = App.utils.parseNumber(qtyEl?.value, 0);
+
+        // enforce non-negative in the UI fields
+        if (priceEl && String(priceEl.value) != String(price)) priceEl.value = String(price);
+        if (qtyEl && String(qtyEl.value) != String(qty)) qtyEl.value = String(qty);
+
+        baseTotal += price * qty;
+      });
+
+      // auto discount
+      const target = App.utils.parseNumber(D.targetTotal?.value, 0);
+      if (target && target < baseTotal) {
+        const auto = ((baseTotal - target) / baseTotal) * 100;
+        D.autoDiscount.value = auto.toFixed(10);
+      } else {
+        D.autoDiscount.value = '';
+      }
+
+      const auto = App.utils.parseNumber(D.autoDiscount?.value, 0);
+      const percent = D.autoDiscount.value ? auto : manual;
+
+      let itemsTotalVal = 0;
+      rows.forEach(r => {
+        const price = App.utils.parseNumber(r.cells?.[2]?.querySelector('input')?.value, 0);
+        const qty = App.utils.parseNumber(r.cells?.[5]?.querySelector('input')?.value, 0);
+
+        let unit = price;
+        if (mode === 'items') unit = price * (1 - percent / 100);
+
+        const afterCell = r.querySelector('.after');
+        const finalCell = r.querySelector('.final');
+        const sumCell = r.querySelector('.sum');
+
+        if (afterCell) afterCell.textContent = App.utils.s3(unit);
+        if (finalCell) finalCell.textContent = App.utils.s3(unit);
+        const sum = unit * qty;
+        if (sumCell) sumCell.textContent = App.utils.s3(sum);
+        itemsTotalVal += sum;
+      });
+
+      if (D.itemsTotal) D.itemsTotal.textContent = App.utils.s3(itemsTotalVal);
+    },
+
+    calcFinal() {
+      // Ensure item calculations are up to date
+      App.invoice.calcItemsNow();
+
+      const D = App.dom;
+      const rows = Array.from(D.items?.rows || []);
+
+      const manual = App.utils.parseNumber(D.manualDiscount?.value, 0);
+      const auto = App.utils.parseNumber(D.autoDiscount?.value, 0);
+      let percent = auto || manual;
+      const mode = D.discountMode?.value || 'none';
+
+      // Recalculate base total (do not trust previous values)
+      const baseTotal = rows.reduce((t, r) => {
+        const p = App.utils.parseNumber(r.cells?.[2]?.querySelector('input')?.value, 0);
+        const q = App.utils.parseNumber(r.cells?.[5]?.querySelector('input')?.value, 0);
+        return t + p * q;
+      }, 0);
+
+      const itemsAfter = App.utils.parseNumber(D.itemsTotal?.textContent, 0);
+      let subtotalVal, afterVal;
+
+      if (mode === 'invoice') {
+        subtotalVal = baseTotal;
+        afterVal = baseTotal * (1 - percent / 100);
+      } else {
+        subtotalVal = itemsAfter;
+        afterVal = itemsAfter;
+        percent = 0;
+      }
+
+      const taxNum = App.utils.parseNumber(D.tax?.value, 0);
+      const delNum = App.utils.parseNumber(D.delivery?.value, 0);
+      if (D.tax) D.tax.value = String(taxNum);
+      if (D.delivery) D.delivery.value = String(delNum);
+
+      if (D.subtotal) D.subtotal.textContent = App.utils.formatCurrency(subtotalVal);
+      if (D.discountVal) D.discountVal.textContent = percent.toFixed(3) + '%';
+      if (D.after) D.after.textContent = App.utils.formatCurrency(afterVal);
+      if (D.taxVal) D.taxVal.textContent = App.utils.formatCurrency(taxNum);
+      if (D.deliveryVal) D.deliveryVal.textContent = App.utils.formatCurrency(delNum);
+      if (D.final) D.final.textContent = App.utils.formatCurrency(afterVal + taxNum + delNum);
+
+      // update print view quietly
+      try { App.print.renderPrintView(); } catch (e) {}
+    },
+
+    computeTotals(inv) {
+      const mode = inv.discountMode || 'none';
+      const manual = App.utils.parseNumber(inv.manualDiscount, 0);
+      const auto = App.utils.parseNumber(inv.autoDiscount, 0);
+      let percent = auto || manual;
+
+      const items = Array.isArray(inv.items) ? inv.items : [];
+      const baseTotal = items.reduce((t, it) => t + App.utils.parseNumber(it.price, 0) * App.utils.parseNumber(it.qty, 0), 0);
+
+      let itemsAfterTotal = baseTotal;
+      if (mode === 'items') {
+        itemsAfterTotal = items.reduce((t, it) => {
+          const p = App.utils.parseNumber(it.price, 0);
+          const q = App.utils.parseNumber(it.qty, 0);
+          const unit = p * (1 - percent / 100);
+          return t + unit * q;
+        }, 0);
+      }
+
+      let subtotalVal, afterVal, discountVal;
+      if (mode === 'invoice') {
+        subtotalVal = baseTotal;
+        afterVal = baseTotal * (1 - percent / 100);
+        discountVal = subtotalVal - afterVal;
+      } else {
+        subtotalVal = itemsAfterTotal;
+        afterVal = itemsAfterTotal;
+        discountVal = 0;
+        percent = 0;
+      }
+
+      const taxNum = App.utils.parseNumber(inv.tax, 0);
+      const delNum = App.utils.parseNumber(inv.delivery, 0);
+
+      return {
+        subtotal: subtotalVal,
+        discount: discountVal,
+        after: afterVal,
+        final: afterVal + taxNum + delNum,
+        percent
+      };
+    },
+
+    buildInvoiceJSON() {
+      const D = App.dom;
+      const clean = App.utils.sanitizeInput;
+
+      const data = {
+        date: D.date?.value ?? '',
+        invoiceNo: clean(D.invoiceNo?.value ?? ''),
+        customer: clean(D.customer?.value ?? ''),
+        notes: clean(D.notes?.value ?? ''),
+        phone: clean(D.phone?.value ?? ''),
+        address: clean(D.address?.value ?? ''),
+        discountMode: D.discountMode?.value ?? 'none',
+        manualDiscount: String(App.utils.parseNumber(D.manualDiscount?.value, 0)),
+        autoDiscount: String(App.utils.parseNumber(D.autoDiscount?.value, 0)),
+        targetTotal: String(App.utils.parseNumber(D.targetTotal?.value, 0)),
+        tax: String(App.utils.parseNumber(D.tax?.value, 0)),
+        delivery: String(App.utils.parseNumber(D.delivery?.value, 0)),
+        items: []
+      };
+
+      const rows = Array.from(D.items?.rows || []);
+      rows.forEach(r => {
+        const name = clean(r.cells?.[1]?.querySelector('input')?.value ?? '');
+        const price = App.utils.parseNumber(r.cells?.[2]?.querySelector('input')?.value, 0);
+        const qty = App.utils.parseNumber(r.cells?.[5]?.querySelector('input')?.value, 0);
+        data.items.push({ name, price: String(price), qty: String(qty) });
+      });
+
+      // totals recalculated (server may ignore, but ensures integrity client-side)
+      const totals = App.invoice.computeTotals(data);
+      data.subtotal = App.utils.s3(totals.subtotal);
+      data.discount = App.utils.s3(totals.discount);
+      data.after = App.utils.s3(totals.after);
+      data.final = App.utils.s3(totals.final);
+
+      return data;
+    },
+
+    validateBeforeSave(inv) {
+      const customer = (inv.customer ?? '').trim();
+      const invoiceNo = (inv.invoiceNo ?? '').trim();
+      const items = Array.isArray(inv.items) ? inv.items : [];
+      const hasItem = items.some(it => (it.name ?? '').trim() && App.utils.parseNumber(it.qty, 0) > 0);
+      if (!invoiceNo) return { ok: false, msg: 'رقم الفاتورة مطلوب' };
+      if (!customer) return { ok: false, msg: 'اسم العميل مطلوب' };
+      if (!hasItem) return { ok: false, msg: 'أضف صنف واحد على الأقل' };
+      return { ok: true };
+    },
+
+    newInvoice() {
+      const D = App.dom;
+      D.date.value = '';
+      D.customer.value = '';
+      D.notes.value = '';
+      D.phone.value = '';
+      D.address.value = '';
+      D.discountMode.value = 'none';
+      D.manualDiscount.value = 0;
+      D.autoDiscount.value = '';
+      D.targetTotal.value = '';
+      D.tax.value = 0;
+      D.delivery.value = 0;
+      D.items.innerHTML = '';
+      App.invoice.addRow('', 0, 1);
+      App.invoice.calcItemsNow();
+      App.invoice.calcFinal();
+      App.ui.setLedgerStatus('فاتورة جديدة', '#0f172a');
+      App.ledger.setNextInvoiceNo();
+    },
+
+    importFromObject(obj) {
+      const v = App.utils.validateInvoiceSchema(obj);
+      if (!v.ok) {
+        App.ui.setLedgerStatus('ملف الاستيراد غير صالح: ' + v.error, '#b91c1c');
+        return;
+      }
+
+      const D = App.dom;
+      const clean = App.utils.sanitizeInput;
+      D.date.value = obj.date || '';
+      D.invoiceNo.value = clean(obj.invoiceNo || '');
+      D.customer.value = clean(obj.customer || '');
+      D.notes.value = clean(obj.notes || '');
+      D.phone.value = clean(obj.phone || '');
+      D.address.value = clean(obj.address || '');
+      D.discountMode.value = obj.discountMode || 'none';
+      D.manualDiscount.value = App.utils.parseNumber(obj.manualDiscount, 0);
+      D.autoDiscount.value = obj.autoDiscount === '' ? '' : String(App.utils.parseNumber(obj.autoDiscount, 0));
+      D.targetTotal.value = obj.targetTotal === '' ? '' : String(App.utils.parseNumber(obj.targetTotal, 0));
+      D.tax.value = App.utils.parseNumber(obj.tax, 0);
+      D.delivery.value = App.utils.parseNumber(obj.delivery, 0);
+
+      D.items.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      (obj.items || []).forEach(it => {
+        const trBefore = D.items;
+        // temporarily append to fragment
+        const originalAppend = trBefore.appendChild.bind(trBefore);
+        trBefore.appendChild = (node) => frag.appendChild(node);
+        try {
+          App.invoice.addRow(it.name, it.price, it.qty, { skipCalc: true });
+        } finally {
+          trBefore.appendChild = originalAppend;
+        }
+      });
+      D.items.appendChild(frag);
+
+      App.invoice.calcItemsNow();
+      App.invoice.calcFinal();
+      App.print.renderPrintView();
+    }
+  },
+
+  print: {
+    renderPrintView() {
+      try { App.invoice.calcItemsNow(); } catch (e) {}
+
+      const D = App.dom;
+      const host = D.printPages;
+      const tpl = D.printSingle;
+      if (!host || !tpl) return;
+
+      // hide template
+      try { tpl.style.display = 'none'; } catch (e) {}
+
+      const pDate = (D.date.value || '').replaceAll('-', '/');
+      const pInvoice = App.utils.sanitizeInput(D.invoiceNo.value);
+      const pCustomer = App.utils.sanitizeInput(D.customer.value);
+      const pNotes = App.utils.sanitizeInput(D.notes.value);
+      const rawPhone = App.utils.sanitizeInput(D.phone.value).toString().trim();
+      const pPhone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : ('+' + rawPhone)) : '';
+      const pAddress = App.utils.sanitizeInput(D.address.value);
+
+      // collect items from UI
+      const uiRows = document.querySelectorAll('#items tr');
+      const itemsData = [];
+      const nz = (x) => (x !== '' && x !== '0' && x !== '0.000');
+      uiRows.forEach(r => {
+        const name = App.utils.sanitizeInput(r.cells?.[1]?.querySelector('input')?.value ?? '');
+        const qty = (r.cells?.[5]?.querySelector('input')?.value ?? '').toString();
+        const unit = (r.querySelector('.final')?.textContent ?? '').trim();
+        const sum = (r.querySelector('.sum')?.textContent ?? '').trim();
+        if (!name && !nz(qty) && !nz(unit) && !nz(sum)) return;
+        itemsData.push({ name, qty, unit, sum });
+      });
+
+      // totals as displayed
+      const subtotalTxt = (D.subtotal.textContent || '—').trim();
+      const discountTxt = (D.discountVal.textContent || '—').trim();
+      const afterTxt = (D.after.textContent || '—').trim();
+      const taxTxt = (D.taxVal.textContent || '—').trim();
+      const deliveryTxt = (D.deliveryVal.textContent || '—').trim();
+      const finalTxt = (D.final.textContent || '—').trim();
+
+      const PER_PAGE = App.config.itemsPerPage;
+      const totalItems = itemsData.length;
+      const totalPages = Math.max(1, Math.ceil(totalItems / PER_PAGE));
+
+      host.innerHTML = '';
+      const templateFrame = tpl.querySelector('.invoice-frame');
+      if (!templateFrame) return;
+
+      const pagesFrag = document.createDocumentFragment();
+
+      for (let p = 0; p < totalPages; p++) {
+        const isLast = p === totalPages - 1;
+        const page = document.createElement('div');
+        page.className = 'print-sheet';
+
+        const frame = templateFrame.cloneNode(true);
+        const q = (sel) => frame.querySelector(sel);
+
+        if (q('#p_date')) q('#p_date').textContent = pDate || '—';
+        if (q('#p_invoiceNo')) q('#p_invoiceNo').textContent = pInvoice || '—';
+        if (q('#p_customer')) q('#p_customer').textContent = pCustomer || '—';
+        if (q('#p_notes')) q('#p_notes').textContent = pNotes || '—';
+        if (q('#p_phone')) q('#p_phone').textContent = pPhone || '—';
+        if (q('#p_address')) q('#p_address').textContent = pAddress || '—';
+
+        const tbody = q('#p_items');
+        if (tbody) tbody.textContent = '';
+
+        const start = p * PER_PAGE;
+        const end = Math.min(start + PER_PAGE, totalItems);
+        const itemsFrag = document.createDocumentFragment();
+
+        for (let i = start; i < end; i++) {
+          const it = itemsData[i];
+          const tr = document.createElement('tr');
+
+          const td1 = document.createElement('td'); td1.className = 'num'; td1.textContent = String(i + 1);
+          const td2 = document.createElement('td'); td2.className = 'name'; td2.textContent = it.name;
+          const td3 = document.createElement('td'); td3.className = 'money'; td3.textContent = it.unit;
+          const td4 = document.createElement('td'); td4.className = 'num'; td4.textContent = String(it.qty ?? '');
+          const td5 = document.createElement('td'); td5.className = 'money'; td5.textContent = it.sum;
+
+          tr.append(td1, td2, td3, td4, td5);
+          itemsFrag.appendChild(tr);
+        }
+        if (tbody) tbody.appendChild(itemsFrag);
+
+        const totalsWrap = frame.querySelector('.totals-wrap');
+        if (!isLast) {
+          if (totalsWrap) totalsWrap.style.display = 'none';
+        } else {
+          if (totalsWrap) totalsWrap.style.display = '';
+          if (q('#p_subtotal')) q('#p_subtotal').textContent = subtotalTxt;
+          if (q('#p_discount')) q('#p_discount').textContent = discountTxt;
+          if (q('#p_after')) q('#p_after').textContent = afterTxt;
+          if (q('#p_tax')) q('#p_tax').textContent = taxTxt;
+          if (q('#p_delivery')) q('#p_delivery').textContent = deliveryTxt;
+          if (q('#p_final')) q('#p_final').textContent = finalTxt;
+        }
+
+        const pn = document.createElement('div');
+        pn.className = 'page-no';
+        pn.textContent = `صفحة ${p + 1} من ${totalPages}`;
+
+        page.appendChild(pn);
+        page.appendChild(frame);
+        pagesFrag.appendChild(page);
+      }
+
+      host.appendChild(pagesFrag);
+    }
+  },
+
+  ledger: {
+    readQueue() {
+      let arr = [];
+      try { arr = JSON.parse(localStorage.getItem(App.config.queueKey) || '[]'); } catch (e) { arr = []; }
+      return Array.isArray(arr) ? arr : [];
+    },
+
+    writeQueue(arr) {
+      const trimmed = Array.isArray(arr) ? arr.slice(-App.config.queueMax) : [];
+      localStorage.setItem(App.config.queueKey, JSON.stringify(trimmed));
+    },
+
+    migrateLegacyQueue() {
+      try {
+        const legacy = JSON.parse(localStorage.getItem(App.config.legacyQueueKey) || '[]');
+        if (!Array.isArray(legacy) || !legacy.length) return;
+        const cur = App.ledger.readQueue();
+        const seen = new Set(cur.map(x => x.id));
+        for (const it of legacy) {
+          const inv = it?.invoice;
+          if (!inv) continue;
+          const id = App.ledger.makeInvoiceId(inv);
+          if (seen.has(id)) continue;
+          cur.push({ id, ts: it.ts || Date.now(), invoice: inv });
+          seen.add(id);
+        }
+        App.ledger.writeQueue(cur);
+        localStorage.removeItem(App.config.legacyQueueKey);
+      } catch (e) {}
+    },
+
+    makeInvoiceId(inv) {
+      const core = [inv.invoiceNo || '', inv.date || '', inv.customer || '', (inv.items || []).length].join('|');
+      return App.utils.fnv1a(core);
+    },
+
+    queueInvoice(inv) {
+      const id = App.ledger.makeInvoiceId(inv);
+      const arr = App.ledger.readQueue();
+      if (arr.some(x => x.id === id)) return;
+      arr.push({ id, ts: Date.now(), invoice: inv });
+      App.ledger.writeQueue(arr);
+    },
+
+    async flushQueue() {
+      if (!navigator.onLine) return;
+      if (!App.state.isAuth) return;
+      try {
+        // will throw if expired
+        App.auth.getAuthHeader();
+      } catch (e) {
+        return;
+      }
+
+      const arr = App.ledger.readQueue();
+      if (!arr.length) return;
+
+      const remaining = [];
+      for (const item of arr) {
+        try {
+          const res = await App.api.fetch(App.config.endpoints.save, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item.invoice)
+          });
+          const out = await res.json().catch(() => null);
+          if (!(res.ok && (out?.ok ?? true))) remaining.push(item);
+        } catch (e) {
+          remaining.push(item);
+        }
+      }
+      App.ledger.writeQueue(remaining);
+    },
+
+    async saveToLedger() {
+      App.invoice.calcFinal();
+      const payload = App.invoice.buildInvoiceJSON();
+
+      const valid = App.invoice.validateBeforeSave(payload);
+      if (!valid.ok) {
+        App.ui.setLedgerStatus(valid.msg, '#b45309');
+        return;
+      }
+
+      if (!navigator.onLine) {
+        App.ledger.queueInvoice(payload);
+        App.ui.setLedgerStatus('تم الحفظ محليًا (أوفلاين) وسيتم الإرسال عند توفر الإنترنت', '#b45309');
+        return;
+      }
+
+      try {
+        App.ui.setLedgerStatus('جارٍ الحفظ...', '#0f172a');
+        const res = await App.api.fetch(App.config.endpoints.save, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const out = await res.json().catch(() => null);
+        if (res.ok && (out?.ok ?? true)) {
+          App.ui.setLedgerStatus('تم إرسال الفاتورة للدفتر ✅', '#15803d');
+          App.ui.setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+          await App.ledger.refreshInvoicesList();
+        } else {
+          App.ledger.queueInvoice(payload);
+          App.ui.setLedgerStatus('تعذر الإرسال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
+        }
+      } catch (e) {
+        App.ledger.queueInvoice(payload);
+        App.ui.setLedgerStatus('خطأ اتصال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
+      }
+    },
+
+    async refreshInvoicesList() {
+      if (!navigator.onLine) {
+        App.ui.setLedgerStatus('لا يوجد إنترنت لتحديث قائمة الدفتر', '#b45309');
+        return;
+      }
+      try {
+        App.ui.setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
+        const res = await App.api.fetch(App.config.endpoints.list);
+        const data = await res.json().catch(() => null);
+        if (!data || !data.ok) {
+          const err = data?.error || '';
+          const msg = (err === 'Unauthorized' || err === 'unauthorized')
+            ? 'غير مصرح. تأكد من كلمة المرور'
+            : ('فشل تحميل القائمة' + (err ? (': ' + err) : ''));
+          App.ui.setLedgerStatus(msg, '#b91c1c');
+          return;
+        }
+
+        const sel = App.dom.savedInvoices;
+        if (!sel) return;
+        sel.innerHTML = '';
+
+        const ph = document.createElement('option');
+        ph.value = '';
+        ph.textContent = 'اختر فاتورة محفوظة...';
+        sel.appendChild(ph);
+
+        (data.invoices || []).forEach(inv => {
+          const opt = document.createElement('option');
+          opt.value = inv.row;
+          opt.textContent = `${inv.invoiceNo || ''} - ${inv.customer || ''} - ${inv.date || ''}`;
+          sel.appendChild(opt);
+        });
+
+        App.ui.setLedgerStatus('تم تحديث القائمة ✅', '#15803d');
+      } catch (e) {
+        App.ui.setLedgerStatus('تعذر تحديث القائمة', '#b91c1c');
+      }
+    },
+
+    async loadInvoiceByRow(row) {
+      if (!navigator.onLine) {
+        App.ui.setLedgerStatus('لا يوجد إنترنت للتحميل', '#b45309');
+        return;
+      }
+      try {
+        const res = await App.api.fetch(`${App.config.endpoints.get}?row=${encodeURIComponent(row)}`);
+        const data = await res.json().catch(() => null);
+        if (!data || !data.ok) {
+          App.ui.setLedgerStatus('فشل التحميل: ' + (data?.error || ''), '#b91c1c');
+          return;
+        }
+        App.invoice.importFromObject(data.invoice);
+        App.ui.setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
+      } catch (e) {
+        App.ui.setLedgerStatus('فشل التحميل', '#b91c1c');
+      }
+    },
+
+    async loadSelectedInvoice() {
+      const sel = App.dom.savedInvoices;
+      const row = sel ? sel.value : '';
+      if (!row) {
+        App.ui.setLedgerStatus('اختر فاتورة أولاً', '#b45309');
+        return;
+      }
+      await App.ledger.loadInvoiceByRow(row);
+    },
+
+    async deleteSelectedInvoice() {
+      const sel = App.dom.savedInvoices;
+      const row = sel ? sel.value : '';
+      if (!row) {
+        App.ui.setLedgerStatus('اختر فاتورة أولاً', '#b45309');
+        return;
+      }
+      const label = sel.options[sel.selectedIndex]?.textContent || '';
+      const ok = confirm(`هل أنت متأكد من حذف الفاتورة؟\n${label}\n\nلن يمكن استرجاعها.`);
+      if (!ok) return;
+
+      if (!navigator.onLine) {
+        App.ui.setLedgerStatus('لا يوجد إنترنت لتنفيذ الحذف', '#b45309');
+        return;
+      }
+
+      try {
+        App.ui.setLedgerStatus('جارٍ الحذف...', '#0f172a');
+        const res = await App.api.fetch(`${App.config.endpoints.del}?row=${encodeURIComponent(row)}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.ok) {
+          App.ui.setLedgerStatus('فشل الحذف: ' + (data?.error || 'تعذر الحذف'), '#b91c1c');
+          return;
+        }
+        App.ui.setLedgerStatus('تم حذف الفاتورة ✅', '#15803d');
+        await App.ledger.refreshInvoicesList();
+        if (sel) sel.value = '';
+      } catch (e) {
+        App.ui.setLedgerStatus('خطأ أثناء الحذف', '#b91c1c');
+      }
+    },
+
+    async searchInvoice() {
+      const q = (App.dom.searchInvoiceNo?.value || '').trim();
+      if (!q) {
+        App.ui.setLedgerStatus('اكتب رقم الفاتورة للبحث', '#b45309');
+        return;
+      }
+      if (!navigator.onLine) {
+        App.ui.setLedgerStatus('لا يوجد إنترنت للبحث', '#b45309');
+        return;
+      }
+      try {
+        const res = await App.api.fetch(`${App.config.endpoints.find}?invoiceNo=${encodeURIComponent(q)}`);
+        const data = await res.json().catch(() => null);
+        if (!data || !data.ok) {
+          App.ui.setLedgerStatus('غير موجود', '#b91c1c');
+          return;
+        }
+        App.invoice.importFromObject(data.invoice);
+        App.ui.setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
+      } catch (e) {
+        App.ui.setLedgerStatus('فشل البحث', '#b91c1c');
+      }
+    },
+
+    async setNextInvoiceNo() {
+      if (!navigator.onLine) return;
+      try {
+        const res = await App.api.fetch(App.config.endpoints.next);
+        const data = await res.json().catch(() => null);
+        if (data && data.ok && data.nextInvoiceNo) {
+          App.dom.invoiceNo.value = data.nextInvoiceNo;
+        }
+      } catch (e) {}
+    }
+  },
+
+  io: {
+    exportJSON() {
+      App.invoice.calcFinal();
+      const data = App.invoice.buildInvoiceJSON();
+
+      const safeInvoiceNo = App.utils.sanitizeFilenamePart(data.invoiceNo) || 'INV';
+      const safeCustomer = App.utils.sanitizeFilenamePart(data.customer) || 'Customer';
+      const d = (App.dom.date?.value || new Date().toISOString().split('T')[0]);
+      const fileName = `${safeInvoiceNo} - ${safeCustomer} - ${d}.json`;
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    },
+
+    importJSON(e) {
+      const file = e?.target?.files?.[0];
+      if (!file) return;
+      const fr = new FileReader();
+      fr.onload = () => {
+        try {
+          const obj = JSON.parse(String(fr.result || ''));
+          App.invoice.importFromObject(obj);
+        } catch (err) {
+          App.ui.setLedgerStatus('فشل قراءة ملف JSON', '#b91c1c');
+        }
+      };
+      fr.readAsText(file);
+      try { e.target.value = ''; } catch (err) {}
+    }
+  },
+
+  init() {
+    const $ = (id) => document.getElementById(id);
+    App.dom = {
+      // login
+      loginScreen: $('loginScreen'),
+      loginForm: $('loginForm'),
+      loginPass: $('loginPass'),
+      togglePass: $('togglePass'),
+      btnLogin: $('btnLogin'),
+      loginSpinner: $('loginSpinner'),
+      loginBtnText: $('loginBtnText'),
+      loginMsg: $('loginMsg'),
+
+      // invoice
+      date: $('date'),
+      customer: $('customer'),
+      invoiceNo: $('invoiceNo'),
+      phone: $('phone'),
+      address: $('address'),
+      notes: $('notes'),
+
+      items: $('items'),
+      itemsTotal: $('itemsTotal'),
+
+      discountMode: $('discountMode'),
+      manualDiscount: $('manualDiscount'),
+      autoDiscount: $('autoDiscount'),
+      targetTotal: $('targetTotal'),
+
+      tax: $('tax'),
+      delivery: $('delivery'),
+
+      subtotal: $('subtotal'),
+      discountVal: $('discountVal'),
+      after: $('after'),
+      taxVal: $('taxVal'),
+      deliveryVal: $('deliveryVal'),
+      final: $('final'),
+
+      // ledger
+      savedInvoices: $('savedInvoices'),
+      searchInvoiceNo: $('searchInvoiceNo'),
+      ledgerStatus: $('ledgerStatus'),
+
+      // file
+      fileInput: $('fileInput'),
+
+      // print
+      printPages: $('printPages'),
+      printSingle: $('printSingle')
+    };
+
+    // دعم inline onclick الموجود في HTML
+    window.fileInput = App.dom.fileInput;
+
+    // wire login
+    if (App.dom.loginForm) {
+      App.dom.loginForm.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        App.auth.login();
+      });
     }
 
-    // totals only on last
-    const totalsWrap = frame.querySelector('.totals-wrap');
-    if(!isLast){
-      if(totalsWrap) totalsWrap.style.display='none';
-    }else{
-      if(totalsWrap) totalsWrap.style.display='';
-      if(q('#p_subtotal')) q('#p_subtotal').textContent = subtotalTxt;
-      if(q('#p_discount')) q('#p_discount').textContent = discountTxt;
-      if(q('#p_after')) q('#p_after').textContent = afterTxt;
-      if(q('#p_tax')) q('#p_tax').textContent = taxTxt;
-      if(q('#p_delivery')) q('#p_delivery').textContent = deliveryTxt;
-      if(q('#p_final')) q('#p_final').textContent = finalTxt;
+    if (App.dom.loginPass) {
+      App.dom.loginPass.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          App.auth.login();
+        }
+      });
+      setTimeout(() => App.dom.loginPass.focus(), 50);
     }
 
-    // page number inside page (absolute)
-    const pn = document.createElement('div');
-    pn.className = 'page-no';
-    pn.textContent = `صفحة ${p+1} من ${totalPages}`;
-    page.appendChild(pn);
+    if (App.dom.togglePass && App.dom.loginPass) {
+      App.dom.togglePass.addEventListener('click', () => {
+        App.dom.loginPass.type = (App.dom.loginPass.type === 'password') ? 'text' : 'password';
+        App.dom.loginPass.focus();
+      });
+    }
 
-    page.appendChild(frame);
-    host.appendChild(page);
+    // init invoice
+    App.invoice.init();
+
+    // print hooks
+    window.addEventListener('beforeprint', () => {
+      try { App.invoice.calcFinal(); } catch (e) {}
+      App.print.renderPrintView();
+    });
+
+    (function () {
+      const _print = window.print.bind(window);
+      window.print = function () {
+        try { App.invoice.calcFinal(); } catch (e) {}
+        App.print.renderPrintView();
+        return _print();
+      };
+    })();
+
+    // Offline queue
+    App.ledger.migrateLegacyQueue();
+    window.addEventListener('online', () => App.ledger.flushQueue());
+    App.state.flushTimer = setInterval(() => App.ledger.flushQueue(), App.config.autoFlushMs);
+
+    // initial row
+    if (App.dom.items && App.dom.items.rows.length === 0) {
+      App.invoice.addRow('', 0, 1, { skipCalc: true });
+      App.invoice.calcItemsNow();
+    }
   }
-}
-
-window.addEventListener('beforeprint', renderPrintView);
-
-// لفّ window.print بحيث يجهز القالب قبل الطباعة
-(function(){
-  const _print = window.print;
-  window.print = function(){
-    renderPrintView();
-    return _print.call(window);
-  };
-})();
-
-  
+};
 
 // =============================
-// دفتر الفواتير (Google Sheet عبر Apps Script Web App)
+// Global wrappers (لعدم تغيير HTML)
 // =============================
-const PROXY_URL = "https://calm-river-a5dcorninvoices.m-elsayed1510-445.workers.dev";
-let API_PASSWORD = "";
-let IS_AUTH = false;
+window.login = () => App.auth.login();
+window.addRow = (n = '', p = 0, q = 1) => App.invoice.addRow(n, p, q);
+window.calcItems = () => App.invoice.calcItems();
+window.calcFinal = () => App.invoice.calcFinal();
+window.exportJSON = () => App.io.exportJSON();
+window.importJSON = (e) => App.io.importJSON(e);
+window.saveToLedger = () => App.ledger.saveToLedger();
+window.refreshInvoicesList = () => App.ledger.refreshInvoicesList();
+window.loadSelectedInvoice = () => App.ledger.loadSelectedInvoice();
+window.deleteSelectedInvoice = () => App.ledger.deleteSelectedInvoice();
+window.searchInvoice = () => App.ledger.searchInvoice();
+window.newInvoice = () => App.invoice.newInvoice();
+window.setNextInvoiceNo = () => App.ledger.setNextInvoiceNo();
 
-// unified API fetch (adds Authorization automatically)
-async function apiFetch(path, options = {}){
-  options.headers = {
-    ...(options.headers || {}),
-    "Authorization": "Bearer " + API_PASSWORD
-  };
-  return fetch(PROXY_URL + path, options);
-}
-
-function buildInvoiceJSON(){
-  let data={
-    date: date.value,
-    invoiceNo: invoiceNo.value,
-    customer: customer.value,
-    notes: notes.value,
-    phone: phone.value,
-    address: address.value,
-    discountMode: discountMode.value,
-    manualDiscount: manualDiscount.value,
-    autoDiscount: autoDiscount.value,
-    targetTotal: targetTotal.value,
-    tax: tax.value,
-    delivery: delivery.value,
-    items: []
-  };
-  [...items.rows].forEach(r=>data.items.push({
-    name:r.cells[1].children[0].value,
-    price:r.cells[2].children[0].value,
-    qty:r.cells[5].children[0].value
-  }));
-  return data;
-}
-
-function setLedgerStatus(msg, color='#111'){
-  const st=document.getElementById('ledgerStatus');
-  if(st){ st.textContent = msg || ''; st.style.color=color; }
-}
-
-async function saveToLedger(){
-
- try{ calcItems(); }catch(e){}
- try{ calcFinal(); }catch(e){}
- const payload = buildInvoiceJSON();
- if(!navigator.onLine){
-   queueLedger(payload);
-   setLedgerStatus('تم الحفظ محليًا (أوفلاين) وسيتم الإرسال عند توفر الإنترنت', '#b45309');
-   return;
- }
- try{
-   setLedgerStatus('جارٍ الحفظ...', '#0f172a');
-   const res = await apiFetch(`/api/save`, {
-     method: 'POST',
-     headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify(payload)
-   });
-   const out = await res.json().catch(()=>null);
-   if(res.ok && (out?.ok ?? true)){
-     setLedgerStatus('تم إرسال الفاتورة للدفتر ✅', '#15803d');
-     setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
- refreshInvoicesList();
-   }else{
-     queueLedger(payload);
-     setLedgerStatus('تعذر الإرسال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
-   }
- }catch(err){
-   queueLedger(payload);
-   setLedgerStatus('خطأ اتصال، تم الحفظ محليًا لإعادة المحاولة', '#b91c1c');
- }
-
-}
-
-function queueLedger(inv){
-  const key='ledger_queue_v1';
-  const arr = JSON.parse(localStorage.getItem(key) || '[]');
-  arr.push({ts: Date.now(), invoice: inv});
-  localStorage.setItem(key, JSON.stringify(arr));
-}
-
-async function flushLedgerQueue(){
-
- if(!navigator.onLine) return;
- const key='ledger_queue_v1';
- const arr = JSON.parse(localStorage.getItem(key) || '[]');
- if(!arr.length) return;
- const remaining=[];
- for(const item of arr){
-   try{
-     const res = await apiFetch(`/api/save`, {
-       method: 'POST',
-       headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify(item.invoice)
-     });
-     const out = await res.json().catch(()=>null);
-     if(!(res.ok && (out?.ok ?? true))) remaining.push(item);
-   }catch(e){
-     remaining.push(item);
-   }
- }
- localStorage.setItem(key, JSON.stringify(remaining));
-
-}
-window.addEventListener('online', flushLedgerQueue);
-
-// jsonp() removed — using Cloudflare Worker proxy
-async function refreshInvoicesList(){
-  if(!navigator.onLine){
-    setLedgerStatus('لا يوجد إنترنت لتحديث قائمة الدفتر', '#b45309');
-    return;
-  }
-  try{
-    setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
-    const res = await apiFetch(`/api/list`);
-    const data = await res.json().catch(()=>null);
-    if(!data || !data.ok){
-      const err = (data && data.error) ? data.error : '';
-      const msg = (err === 'Unauthorized' || err === 'unauthorized')
-        ? 'غير مصرح. تأكد من كلمة المرور'
-        : ('فشل تحميل القائمة' + (err ? (': ' + err) : ''));
-      setLedgerStatus(msg, '#b91c1c');
-      return;
-    }
-
-    const sel = document.getElementById('savedInvoices');
-    if(!sel) return;
-    sel.innerHTML = '';
-    const ph = document.createElement('option');
-    ph.value = '';
-    ph.textContent = 'اختر فاتورة محفوظة...';
-    sel.appendChild(ph);
-
-    (data.invoices || []).forEach(inv => {
-      const opt = document.createElement('option');
-      opt.value = inv.row;
-      opt.textContent = `${inv.invoiceNo || ''} - ${inv.customer || ''} - ${inv.date || ''}`;
-      sel.appendChild(opt);
-    });
-
-    setLedgerStatus('تم تحديث القائمة ✅', '#15803d');
-  }catch(e){
-    setLedgerStatus('تعذر تحديث القائمة', '#b91c1c');
-  }
-}
-
-
-async function loadSelectedInvoice(){
-  const sel=document.getElementById('savedInvoices');
-  const row = sel ? sel.value : '';
-  if(!row){ setLedgerStatus('اختر فاتورة أولاً', '#b45309'); return; }
-  await loadInvoiceByRow(row);
-}
-
-async function deleteSelectedInvoice(){
-  const sel = document.getElementById('savedInvoices');
-  const row = sel ? sel.value : '';
-
-  if(!row){
-    setLedgerStatus('اختر فاتورة أولاً', '#b45309');
-    return;
-  }
-
-  const label = sel.options[sel.selectedIndex]?.textContent || '';
-  const ok = confirm(`هل أنت متأكد من حذف الفاتورة؟\n${label}\n\nلن يمكن استرجاعها.`);
-  if(!ok) return;
-
-  if(!navigator.onLine){
-    setLedgerStatus('لا يوجد إنترنت لتنفيذ الحذف', '#b45309');
-    return;
-  }
-
-  try{
-    setLedgerStatus('جارٍ الحذف...', '#0f172a');
-
-    // ⚠️ يلزم وجود endpoint في السيرفر: DELETE /api/delete?row=...
-    const res = await apiFetch(`/api/delete?row=${encodeURIComponent(row)}`, {
-      method: 'DELETE'
-    });
-
-    const data = await res.json().catch(()=>null);
-
-    if(!res.ok || !data || !data.ok){
-      const err = data?.error || 'تعذر الحذف';
-      setLedgerStatus('فشل الحذف: ' + err, '#b91c1c');
-      return;
-    }
-
-    setLedgerStatus('تم حذف الفاتورة ✅', '#15803d');
-
-    // تحديث القائمة ومسح الاختيار
-    await refreshInvoicesList();
-    if(sel) sel.value = '';
-
-  }catch(e){
-    setLedgerStatus('خطأ أثناء الحذف', '#b91c1c');
-  }
-}
-
-async function searchInvoice(){
-
- const q=(document.getElementById('searchInvoiceNo')?.value || '').trim();
- if(!q){ setLedgerStatus('اكتب رقم الفاتورة للبحث', '#b45309'); return; }
- if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للبحث', '#b45309'); return; }
- try{
-   const res = await apiFetch(`/api/find?invoiceNo=${encodeURIComponent(q)}`);
-   const data = await res.json();
- if((data?.error==='Unauthorized' || data?.error==='unauthorized') && !refreshInvoicesList._retryOnce){
-  refreshInvoicesList._retryOnce = true;
-  await new Promise(r=>setTimeout(r, 400));
-  return setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
- refreshInvoicesList();
- }
- refreshInvoicesList._retryOnce = false;
-   if(!data || !data.ok){ setLedgerStatus('غير موجود', '#b91c1c'); return; }
-   importFromObject(data.invoice);
-   setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
- }catch(e){
-   setLedgerStatus('فشل البحث', '#b91c1c');
- }
-
-}
-
-async function loadInvoiceByRow(row){
-
- if(!navigator.onLine){ setLedgerStatus('لا يوجد إنترنت للتحميل', '#b45309'); return; }
- try{
-   const res = await apiFetch(`/api/get?row=${encodeURIComponent(row)}`);
-   const data = await res.json();
- if((data?.error==='Unauthorized' || data?.error==='unauthorized') && !refreshInvoicesList._retryOnce){
-  refreshInvoicesList._retryOnce = true;
-  await new Promise(r=>setTimeout(r, 400));
-  return setLedgerStatus('جارٍ تحميل القائمة...', '#0f172a');
- refreshInvoicesList();
- }
- refreshInvoicesList._retryOnce = false;
-   if(!data || !data.ok){
-     setLedgerStatus('فشل التحميل: ' + (data?.error || ''), '#b91c1c');
-     return;
-   }
-   importFromObject(data.invoice);
-   setLedgerStatus('تم تحميل الفاتورة ✅', '#15803d');
- }catch(e){
-   setLedgerStatus('فشل التحميل', '#b91c1c');
- }
-
-}
-
-function importFromObject(d){
-  date.value = d.date || '';
-  invoiceNo.value = d.invoiceNo || '';
-  customer.value = d.customer || '';
-  notes.value = d.notes || '';
-  phone.value = d.phone || '';
-  address.value = d.address || '';
-  discountMode.value = d.discountMode || 'none';
-  manualDiscount.value = d.manualDiscount || 0;
-  autoDiscount.value = d.autoDiscount || '';
-  targetTotal.value = d.targetTotal || '';
-  tax.value = d.tax || 0;
-  delivery.value = d.delivery || 0;
-  items.innerHTML='';
-  (d.items || []).forEach(i=>addRow(i.name, i.price, i.qty));
-  calcItems();
-  calcFinal();
-  renderPrintView();
-}
-
-async function setNextInvoiceNo(){
-  if(!navigator.onLine) return;
-  try{
-    const res = await apiFetch(`/api/next`);
-    const data = await res.json().catch(()=>null);
-    if(data && data.ok && data.nextInvoiceNo){
-      invoiceNo.value = data.nextInvoiceNo;
-    }
-  }catch(e){}
-}
-
-
-function newInvoice(){
-  date.value='';
-  customer.value='';
-  notes.value='';
-  phone.value='';
-  address.value='';
-  discountMode.value='none';
-  manualDiscount.value=0;
-  autoDiscount.value='';
-  targetTotal.value='';
-  tax.value=0;
-  delivery.value=0;
-  items.innerHTML='';
-  addRow();
-  calcItems();
-  calcFinal();
-  setLedgerStatus('فاتورة جديدة', '#0f172a');
-  setNextInvoiceNo();
-}
-</script>
-
-<script>
-(function(){
-  const form = document.getElementById('loginForm');
-  const pass = document.getElementById('loginPass');
-  const toggle = document.getElementById('togglePass');
-  if(form){
-    form.addEventListener('submit', function(e){ e.preventDefault(); if(typeof login==='function') login(); });
-  }
-  if(pass){
-    pass.addEventListener('keydown', function(e){
-      if(e.key === 'Enter'){ e.preventDefault(); if(typeof login==='function') login(); }
-    });
-    setTimeout(()=>pass.focus(), 50);
-  }
-  if(toggle && pass){
-    toggle.addEventListener('click', function(){
-      pass.type = (pass.type === 'password') ? 'text' : 'password';
-      pass.focus();
-    });
-  }
-})();
+// Boot
+document.addEventListener('DOMContentLoaded', () => App.init());
 </script>
 
 </body>
